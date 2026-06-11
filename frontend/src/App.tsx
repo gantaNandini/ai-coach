@@ -16,6 +16,8 @@ const FeedbackReport = lazy(() => import('@/pages/FeedbackReport'))
 const KnowledgeBase = lazy(() => import('@/pages/KnowledgeBase'))
 const Analytics = lazy(() => import('@/pages/Analytics'))
 const Profile = lazy(() => import('@/pages/Profile'))
+const Admin = lazy(() => import('@/pages/Admin'))
+const Billing = lazy(() => import('@/pages/Billing'))
 
 function PageLoader() {
   return (
@@ -52,6 +54,8 @@ export default function App() {
           <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBase /></ProtectedRoute>} />
           <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+          <Route path="/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

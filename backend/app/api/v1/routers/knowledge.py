@@ -109,9 +109,11 @@ async def ingest_text(
         tenant_id=tenant_id, created_by=current_user.id,
     )
 
-    # Wire the ingestion pipeline — run chunking + embedding asynchronously
+    # Wire the ingestion pipeline via worker queue (retry + monitoring)
     from app.tasks.knowledge_ingestion import run_ingestion
+    from app.tasks.worker import enqueue
     background_tasks.add_task(
+        enqueue,
         run_ingestion,
         source_id=source.id,
         kb_id=kb_id,
@@ -162,9 +164,11 @@ async def upload_source(
         created_by=current_user.id,
     )
 
-    # Wire the ingestion pipeline — run chunking + embedding asynchronously
+    # Wire the ingestion pipeline via worker queue (retry + monitoring)
     from app.tasks.knowledge_ingestion import run_ingestion
+    from app.tasks.worker import enqueue
     background_tasks.add_task(
+        enqueue,
         run_ingestion,
         source_id=source.id,
         kb_id=kb_id,
@@ -229,7 +233,9 @@ async def ingest_url(
     )
 
     from app.tasks.knowledge_ingestion import run_ingestion
+    from app.tasks.worker import enqueue
     background_tasks.add_task(
+        enqueue,
         run_ingestion,
         source_id=source.id,
         kb_id=kb_id,

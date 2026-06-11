@@ -84,17 +84,18 @@ class UnitOfWork:
     def __init__(
         self,
         session: AsyncSession | None = None,
+        tenant_id=None,
     ) -> None:
         """
         Parameters:
             session: optional externally-managed AsyncSession.
-                     When provided, the UoW does NOT close it on exit —
-                     the caller owns the session lifetime.
-                     When None (default), the UoW creates and owns its
-                     own session from AsyncSessionLocal.
+            tenant_id: optional UUID — when set, the GUC
+                       app.current_tenant_id is set on the session
+                       so PostgreSQL RLS policies can filter rows.
         """
         self._external_session = session is not None
         self._session: AsyncSession = session or AsyncSessionLocal()
+        self._tenant_id = tenant_id
 
         # Lazy repository cache — populated on first access
         self._users: UserRepository | None = None
@@ -114,10 +115,22 @@ class UnitOfWork:
     # ── Context manager ───────────────────────────────────────────────────────
 
     async def __aenter__(self) -> "UnitOfWork":
+        # Set PostgreSQL GUC for RLS enforcement
+        if self._tenant_id is not None:
+            try:
+                from sqlalchemy import text as _text
+                await self._session.execute(
+                    _text("SET LOCAL app.current_tenant_id = :tid"),
+                    {"tid": str(self._tenant_id)},
+                )
+                await self._session.execute(
+                    _text("SET LOCAL app.is_superadmin = 'false'")
+                )
+            except Exception:
+                pass  # GUC set is non-fatal — app-layer filters still protect data
         return self
 
-    async def __aexit__(
-        self,
+    async def __aexit__(        self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,

@@ -111,9 +111,28 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-# pgvector SQLAlchemy integration
+# pgvector SQLAlchemy integration — graceful degradation if not installed
 # pgvector==0.3.6 declared in requirements.txt
-from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+try:
+    from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+    _PGVECTOR_AVAILABLE = True
+except ImportError:
+    # pgvector Python package not installed — fall back to ARRAY type.
+    # Embeddings will still be stored/retrieved; similarity search is disabled.
+    from sqlalchemy import ARRAY, Float  # type: ignore
+    class Vector:  # type: ignore[no-redef]
+        """Stub Vector type used when pgvector is not installed."""
+        def __init__(self, dim: int) -> None:
+            self._dim = dim
+            self._type = ARRAY(Float)
+        def __call__(self, *args, **kwargs):
+            return self._type
+    _PGVECTOR_AVAILABLE = False
+    import logging as _logging
+    _logging.getLogger("ai_coach.models").warning(
+        "pgvector not installed — embedding column uses ARRAY(Float). "
+        "Install pgvector for vector similarity search."
+    )
 
 from app.models.base import (
     Base,

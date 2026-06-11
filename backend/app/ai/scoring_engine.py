@@ -138,13 +138,17 @@ class ScoringEngine:
             },
         )
 
-    def _get_scoring_template(self, rubric: dict) -> str:
+    def _get_scoring_template(self, rubric: dict, module_version=None) -> str:
         """
-        Build scoring prompt template based on rubric structure.
-
-        Returns:
-            prompt template string
+        Load scoring prompt template from module version's prompt_templates.
+        Falls back to generic template if no 'scoring' type template is seeded.
         """
+        if module_version is not None:
+            templates = getattr(module_version, "prompt_templates", None) or []
+            for t in templates:
+                if getattr(t, "template_type", None) == "scoring":
+                    return t.template_text
+        # Generic fallback — only used when no module scoring template is seeded
         return """You are scoring the following feedback submission against this rubric:
 
 RUBRIC:

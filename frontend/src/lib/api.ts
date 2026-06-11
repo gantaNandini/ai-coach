@@ -85,6 +85,8 @@ export const knowledgeApi = {
   create: (name: string, description?: string) => api.post('/knowledge/', { name, description }),
   delete: (id: string) => api.delete(`/knowledge/${id}`),
   listSources: (kb_id: string) => api.get(`/knowledge/${kb_id}/sources`),
+  getSourceStatus: (kb_id: string, source_id: string) => api.get(`/knowledge/${kb_id}/sources/${source_id}/status`),
   addText: (kb_id: string, title: string, content: string) => api.post(`/knowledge/${kb_id}/sources/text`, { title, content }),
+  addUrl: (kb_id: string, title: string, url: string) => api.post(`/knowledge/${kb_id}/sources/url`, { title, url }),
   deleteSource: (kb_id: string, source_id: string) => api.delete(`/knowledge/${kb_id}/sources/${source_id}`),
 }

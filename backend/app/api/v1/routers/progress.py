@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from app.schemas.common import MessageResponse
 from app.services.progress.progress_service import ProgressService
 from app.services.progress.notification_service import NotificationService
+from app.services.progress.achievement_service import AchievementService
 from app.api.v1.dependencies.auth import get_current_active_user, get_current_tenant_id
 from app.models.user import User
 from pydantic import BaseModel
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 router = APIRouter()
 _progress_svc = ProgressService()
 _notif_svc = NotificationService()
+_achievement_svc = AchievementService()
 
 
 class NotifUpdateRequest(BaseModel):
@@ -90,3 +92,46 @@ async def mark_all_read(
     """Mark all notifications as read."""
     count = await _notif_svc.mark_all_read(user_id=current_user.id, tenant_id=tenant_id)
     return MessageResponse(message=f"Marked {count} notifications as read")
+
+
+# ── Achievements ──────────────────────────────────────────────────────────────
+
+@router.get("/achievements")
+async def list_achievements(
+    current_user: User = Depends(get_current_active_user),
+    tenant_id: UUID | None = Depends(get_current_tenant_id),
+):
+    """List all available achievements."""
+    items = await _achievement_svc.list_achievements(tenant_id=tenant_id)
+    return [
+        {
+            "id": str(a.id),
+            "key": a.key,
+            "name": a.name,
+            "description": a.description,
+            "icon": a.icon,
+            "points": a.points,
+            "criteria": a.criteria,
+        }
+        for a in items
+    ]
+
+
+@router.get("/achievements/mine")
+async def my_achievements(
+    current_user: User = Depends(get_current_active_user),
+    tenant_id: UUID | None = Depends(get_current_tenant_id),
+):
+    """List achievements earned by the current user."""
+    earned = await _achievement_svc.get_user_achievements(
+        user_id=current_user.id, tenant_id=tenant_id
+    )
+    return [
+        {
+            "id": str(ua.id),
+            "achievement_id": str(ua.achievement_id),
+            "awarded_at": ua.awarded_at.isoformat(),
+            "metadata": ua.metadata_,
+        }
+        for ua in earned
+    ]

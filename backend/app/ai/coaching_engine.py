@@ -103,10 +103,8 @@ class CoachingEngine:
             knowledge_context = self._citations.build_context_text(chunks)
             knowledge_chunks = [knowledge_context] if chunks else []
             
-            # Build prompt
-            # For MVP, we use a simple template approach
-            # In production, load from ModulePromptTemplate table
-            template = self._get_default_coaching_template()
+            # Build prompt — load from ModulePromptTemplate table, not hardcoded
+            template = self._load_prompt_template(module_version, "coaching")
             
             prompt = self._prompt_builder.build_coaching_prompt(
                 template=template,
@@ -167,6 +165,22 @@ class CoachingEngine:
                     "generation_time_ms": generation_time_ms,
                 },
             )
+
+    def _load_prompt_template(self, module_version, template_type: str = "coaching") -> str:
+        """
+        Load prompt template from the module version's prompt_templates list.
+        The field on ModulePromptTemplate is `template_body` (not template_text).
+        Falls back to a generic default only if no template is seeded for this module.
+        Template type: 'coaching', 'roleplay_system', 'scoring'
+        """
+        templates = getattr(module_version, "prompt_templates", None) or []
+        for t in templates:
+            if getattr(t, "template_type", None) == template_type:
+                body = getattr(t, "template_body", None)
+                if body:
+                    return body
+        # Fallback — only used if no template was seeded for this module
+        return self._get_default_coaching_template()
 
     def _get_default_coaching_template(self) -> str:
         return """You are an expert coach. Review this {{framework}} feedback submission and respond with ONLY a JSON object.

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { User, Award, TrendingUp, Edit2, Check, X, Loader2, Flame } from 'lucide-react'
+import { User, Award, TrendingUp, Edit2, Check, X, Loader2, Flame, Star } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
@@ -21,6 +21,16 @@ export default function Profile() {
     queryFn: () => api.get('/sessions/coaching', { params: { page_size: 5, status: 'completed' } }).then(r => r.data),
   })
 
+  const { data: allAchievements } = useQuery({
+    queryKey: ['achievements'],
+    queryFn: () => api.get('/progress/achievements').then(r => r.data as any[]),
+  })
+
+  const { data: myAchievements } = useQuery({
+    queryKey: ['achievements', 'mine'],
+    queryFn: () => api.get('/progress/achievements/mine').then(r => r.data as any[]),
+  })
+
   const updateMutation = useMutation({
     mutationFn: (name: string) => api.patch('/users/me', { full_name: name }),
     onSuccess: async () => {
@@ -36,6 +46,12 @@ export default function Profile() {
     ? (progress.reduce((a: number, p: any) => a + (p.best_score || 0), 0) / progress.length).toFixed(0)
     : '0'
   const maxStreak = progress?.reduce((a: number, p: any) => Math.max(a, p.streak_days), 0) || 0
+
+  // Map earned achievement IDs for quick lookup
+  const earnedIds = new Set((myAchievements || []).map((ua: any) => ua.achievement_id))
+  const totalPoints = (allAchievements || [])
+    .filter((a: any) => earnedIds.has(a.id))
+    .reduce((sum: number, a: any) => sum + (a.points || 0), 0)
 
   return (
     <Layout>
@@ -76,6 +92,13 @@ export default function Profile() {
               {user?.is_superadmin && (
                 <span className="inline-block mt-2 text-xs px-2 py-0.5 bg-orange-500/10 text-orange-500 rounded-full font-medium">Superadmin</span>
               )}
+              {totalPoints > 0 && (
+                <div className="flex items-center gap-1.5 mt-2">
+                  <Star className="h-4 w-4 text-yellow-500" fill="currentColor" />
+                  <span className="text-sm font-semibold text-yellow-500">{totalPoints} XP</span>
+                  <span className="text-xs text-muted-foreground">· {earnedIds.size} achievements earned</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -93,6 +116,43 @@ export default function Profile() {
             ))}
           </div>
         </div>
+
+        {/* Achievements */}
+        {allAchievements && allAchievements.length > 0 && (
+          <div className="bg-card border border-border rounded-xl p-6">
+            <h2 className="font-semibold mb-4">
+              Achievements
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                {earnedIds.size}/{allAchievements.length} earned
+              </span>
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {allAchievements.map((a: any) => {
+                const earned = earnedIds.has(a.id)
+                return (
+                  <div key={a.id}
+                    className={`flex flex-col items-center text-center p-3 rounded-xl border transition-colors ${
+                      earned
+                        ? 'border-yellow-500/30 bg-yellow-500/5'
+                        : 'border-border bg-muted/30 opacity-50'
+                    }`}>
+                    <div className={`text-2xl mb-1.5 ${earned ? '' : 'grayscale'}`}>
+                      {a.icon === 'Award' ? '🏆' :
+                       a.icon === 'TrendingUp' ? '📈' :
+                       a.icon === 'BookOpen' ? '📚' :
+                       a.icon === 'Star' ? '⭐' :
+                       a.icon === 'Zap' ? '⚡' :
+                       a.icon === 'Flame' ? '🔥' :
+                       a.icon === 'MessageCircle' ? '💬' : '🎖️'}
+                    </div>
+                    <div className="text-xs font-medium leading-tight">{a.name}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{a.points} XP</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Progress by module */}
         {progress && progress.length > 0 && (
@@ -144,3 +204,4 @@ export default function Profile() {
     </Layout>
   )
 }
+

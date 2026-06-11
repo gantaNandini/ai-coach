@@ -73,6 +73,15 @@ async def create_coaching_session(
         module_id=body.module_id,
         tenant_id=tenant_id,
     )
+    # Fire analytics event (non-blocking)
+    import asyncio as _asyncio
+    _asyncio.create_task(_feedback_svc.track_session_event(
+        event_type="session_started",
+        session_id=s.id,
+        user_id=current_user.id,
+        tenant_id=tenant_id,
+        final_score=None,
+    ))
     return _session_dict(s)
 
 
@@ -253,13 +262,35 @@ async def complete_coaching_session(
         s = await _coaching_svc.get_session_detail(session_id)
     except Exception:
         s = await _coaching_svc.get_session_detail(session_id)
-    
+
+    # Fire analytics event (non-blocking)
+    import asyncio as _asyncio
+    _asyncio.create_task(_feedback_svc.track_session_event(
+        event_type="session_completed",
+        session_id=session_id,
+        user_id=current_user.id,
+        tenant_id=tenant_id,
+        final_score=float(final_score),
+    ))
+
     # Include feedback report ID in response
     result = _session_dict(s)
     try:
         report = await _feedback_svc.get_feedback_for_session(session_id)
         if report:
             result["feedback_report_id"] = str(report.id)
+            # Trigger achievement check (non-blocking)
+            import asyncio as _asyncio2
+            from app.services.progress.achievement_service import AchievementService as _AchSvc
+            _asyncio2.create_task(
+                _AchSvc().check_and_award_achievements(
+                    user_id=current_user.id,
+                    module_id=s.module_id,
+                    tenant_id=tenant_id,
+                    trigger_event="session_completed",
+                    context={"score": float(final_score), "session_id": str(session_id)},
+                )
+            )
     except Exception:
         pass
     return result
@@ -329,6 +360,8 @@ async def submit_roleplay_turn(
     from app.ai.prompt_builder import PromptBuilder
     from app.ai.roleplay_engine import RoleplayEngine
     from app.database.unit_of_work import UnitOfWork
+    from app.models.session import RoleplayMessage
+    from sqlalchemy import select as _sa_select
 
     async with UnitOfWork() as uow:
         session = await uow.roleplay_sessions.get_by_id(session_id)
@@ -338,6 +371,18 @@ async def submit_roleplay_turn(
         module_version_id = session.module_version_id
         persona_id = session.persona_id
         context = session.context or {}
+
+        # Load real conversation history for persona memory
+        msgs_result = await uow.session.execute(
+            _sa_select(RoleplayMessage)
+            .where(RoleplayMessage.session_id == session_id)
+            .order_by(RoleplayMessage.turn_number)
+        )
+        history_msgs = msgs_result.scalars().all()
+        conversation_history = [
+            {"role": m.role, "content": m.content}
+            for m in history_msgs
+        ]
 
     ollama = OllamaClient()
     builder = PromptBuilder()
@@ -350,7 +395,7 @@ async def submit_roleplay_turn(
             persona_id=persona_id,
             module_version_id=module_version_id,
             turn_number=turn_number,
-            conversation_history=[],
+            conversation_history=conversation_history,
             session_context=context,
         )
     except Exception as exc:

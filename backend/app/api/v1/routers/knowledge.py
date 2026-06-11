@@ -1,8 +1,9 @@
 from __future__ import annotations
+import logging
 import os
 import uuid
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, UploadFile, File, status
 from pydantic import BaseModel
 from app.schemas.common import MessageResponse
 from app.services.knowledge.knowledge_service import KnowledgeBaseService, KnowledgeSourceService
@@ -10,6 +11,8 @@ from app.api.v1.dependencies.auth import get_current_active_user, get_current_te
 from app.models.user import User
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _kb_svc = KnowledgeBaseService()
@@ -94,27 +97,42 @@ async def list_sources(
 async def ingest_text(
     kb_id: UUID,
     body: TextSourceRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
     tenant_id: UUID | None = Depends(get_current_tenant_id),
 ):
-    """Ingest plain text into a knowledge base."""
+    """Ingest plain text into a knowledge base. Triggers ingestion + embedding in background."""
     if tenant_id is None:
         raise BadRequestError("Tenant context required")
     source = await _src_svc.create_source_from_text(
         kb_id=kb_id, title=body.title, content=body.content,
         tenant_id=tenant_id, created_by=current_user.id,
     )
+
+    # Wire the ingestion pipeline — run chunking + embedding asynchronously
+    from app.tasks.knowledge_ingestion import run_ingestion
+    background_tasks.add_task(
+        run_ingestion,
+        source_id=source.id,
+        kb_id=kb_id,
+        tenant_id=tenant_id,
+        source_type="paste",
+        title=body.title,
+        content=body.content,
+    )
+    logger.info("[KB] Ingestion queued for text source %s (kb=%s)", source.id, kb_id)
     return {"id": str(source.id), "title": source.title, "type": source.type, "status": source.status}
 
 
 @router.post("/{kb_id}/sources/upload", status_code=status.HTTP_201_CREATED)
 async def upload_source(
     kb_id: UUID,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_active_user),
     tenant_id: UUID | None = Depends(get_current_tenant_id),
 ):
-    """Upload a file to a knowledge base."""
+    """Upload a file to a knowledge base. Triggers ingestion + embedding in background."""
     if tenant_id is None:
         raise BadRequestError("Tenant context required")
 
@@ -133,15 +151,30 @@ async def upload_source(
     with open(file_path, "wb") as f:
         f.write(contents)
 
+    mime_type = file.content_type or "application/octet-stream"
     source = await _src_svc.create_source_from_file(
         kb_id=kb_id,
         title=file.filename or file_name,
         file_path=file_path,
-        mime_type=file.content_type or "application/octet-stream",
+        mime_type=mime_type,
         file_size=len(contents),
         tenant_id=tenant_id,
         created_by=current_user.id,
     )
+
+    # Wire the ingestion pipeline — run chunking + embedding asynchronously
+    from app.tasks.knowledge_ingestion import run_ingestion
+    background_tasks.add_task(
+        run_ingestion,
+        source_id=source.id,
+        kb_id=kb_id,
+        tenant_id=tenant_id,
+        source_type="upload",
+        title=source.title,
+        file_path=file_path,
+        mime_type=mime_type,
+    )
+    logger.info("[KB] Ingestion queued for upload source %s (kb=%s)", source.id, kb_id)
     return {"id": str(source.id), "title": source.title, "type": source.type, "status": source.status}
 
 
@@ -154,3 +187,56 @@ async def delete_source(
     """Delete a knowledge source."""
     await _src_svc.delete_source(source_id)
     return MessageResponse(message="Source deleted")
+
+
+@router.get("/{kb_id}/sources/{source_id}/status")
+async def get_source_status(
+    kb_id: UUID,
+    source_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get ingestion status for a knowledge source."""
+    source = await _src_svc.get_source(source_id)
+    return {
+        "id": str(source.id),
+        "title": source.title,
+        "type": source.type,
+        "status": source.status,
+        "chunk_count": source.chunk_count,
+        "error_message": getattr(source, "error_message", None),
+    }
+
+
+class URLSourceRequest(BaseModel):
+    title: str
+    url: str
+
+
+@router.post("/{kb_id}/sources/url", status_code=status.HTTP_201_CREATED)
+async def ingest_url(
+    kb_id: UUID,
+    body: URLSourceRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    tenant_id: UUID | None = Depends(get_current_tenant_id),
+):
+    """Ingest a URL into a knowledge base. Triggers crawl + ingestion + embedding in background."""
+    if tenant_id is None:
+        raise BadRequestError("Tenant context required")
+    source = await _src_svc.create_source_from_url(
+        kb_id=kb_id, url=body.url, title=body.title,
+        tenant_id=tenant_id, created_by=current_user.id,
+    )
+
+    from app.tasks.knowledge_ingestion import run_ingestion
+    background_tasks.add_task(
+        run_ingestion,
+        source_id=source.id,
+        kb_id=kb_id,
+        tenant_id=tenant_id,
+        source_type="url",
+        title=body.title,
+        url=body.url,
+    )
+    logger.info("[KB] Ingestion queued for URL source %s (kb=%s)", source.id, kb_id)
+    return {"id": str(source.id), "title": source.title, "type": source.type, "status": source.status}

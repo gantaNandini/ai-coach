@@ -177,10 +177,8 @@ class AchievementService:
         Check achievement criteria after a trigger event and auto-award
         any that have been earned.
 
-        Stub implementation: returns empty list. In production, this
-        would query achievements with matching criteria.type, evaluate
-        the criteria against user progress data, and call award_achievement()
-        for each newly-earned achievement.
+        Evaluates seeded achievement criteria against real user progress data.
+        Supports criteria types: session_count, score_threshold, roleplay_count, streak_days.
 
         Parameters:
             trigger_event: e.g. "session_completed", "feedback_viewed"
@@ -189,6 +187,92 @@ class AchievementService:
         Returns:
             List of newly-awarded UserAchievement records.
         """
-        # TODO: implement criteria evaluation logic
-        # For now, return empty list
-        return []
+        newly_awarded: list[UserAchievement] = []
+
+        try:
+            async with UnitOfWork() as uow:
+                from sqlalchemy import func, select
+                from app.models.gamification import Achievement
+                from app.models.session import CoachingSession, RoleplaySession
+
+                # Fetch all active achievements relevant to this tenant
+                ach_stmt = (
+                    select(Achievement)
+                    .where(Achievement.is_active.is_(True))
+                )
+                if tenant_id is not None:
+                    ach_stmt = ach_stmt.where(
+                        (Achievement.tenant_id == tenant_id)
+                        | Achievement.tenant_id.is_(None)
+                    )
+                else:
+                    ach_stmt = ach_stmt.where(Achievement.tenant_id.is_(None))
+
+                achievements = (await uow.session.execute(ach_stmt)).scalars().all()
+
+                # Pre-compute user stats needed for evaluation
+                # Session count (completed coaching sessions)
+                completed_coaching = (await uow.session.execute(
+                    select(func.count(CoachingSession.id))
+                    .where(CoachingSession.user_id == user_id)
+                    .where(CoachingSession.status == "completed")
+                )).scalar_one() or 0
+
+                # Roleplay count (completed roleplay sessions)
+                completed_roleplay = (await uow.session.execute(
+                    select(func.count(RoleplaySession.id))
+                    .where(RoleplaySession.user_id == user_id)
+                    .where(RoleplaySession.status == "completed")
+                )).scalar_one() or 0
+
+                # Best score
+                best_score_raw = context.get("score") or 0
+                try:
+                    best_score = float(best_score_raw)
+                except (TypeError, ValueError):
+                    best_score = 0.0
+
+                for achievement in achievements:
+                    criteria = achievement.criteria or {}
+                    criteria_type = criteria.get("type", "")
+                    threshold = criteria.get("threshold", 0)
+
+                    earned = False
+                    if criteria_type == "session_count":
+                        earned = completed_coaching >= threshold
+                    elif criteria_type == "roleplay_count":
+                        earned = completed_roleplay >= threshold
+                    elif criteria_type == "score_threshold":
+                        earned = best_score >= threshold
+                    elif criteria_type == "streak_days":
+                        # Simplified: check if user has N+ sessions in last N days
+                        from datetime import datetime, timedelta, timezone
+                        since = datetime.now(timezone.utc) - timedelta(days=threshold)
+                        streak_count = (await uow.session.execute(
+                            select(func.count(CoachingSession.id))
+                            .where(CoachingSession.user_id == user_id)
+                            .where(CoachingSession.status == "completed")
+                            .where(CoachingSession.created_at >= since)
+                        )).scalar_one() or 0
+                        earned = streak_count >= threshold
+
+                    if not earned:
+                        continue
+
+                    # Try to award (idempotent — returns None if already awarded)
+                    try:
+                        awarded = await self.award_achievement(
+                            user_id=user_id,
+                            achievement_key=achievement.key,
+                            tenant_id=tenant_id,
+                            metadata={"trigger": trigger_event, "context": context},
+                        )
+                        if awarded is not None:
+                            newly_awarded.append(awarded)
+                    except Exception:
+                        pass  # NotFoundError or already awarded — skip
+
+        except Exception:
+            pass  # achievement evaluation must never block the main flow
+
+        return newly_awarded

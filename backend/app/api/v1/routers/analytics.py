@@ -36,6 +36,17 @@ async def dashboard(
     current_user: User = Depends(get_current_active_user),
     tenant_id: UUID | None = Depends(get_current_tenant_id),
 ):
-    """Get analytics dashboard metrics."""
+    """Get analytics dashboard metrics — real database aggregation."""
     data = await _svc.get_dashboard(tenant_id=tenant_id, days=days)
     return data
+
+
+@router.get("/module-performance")
+async def module_performance(
+    days: int = 30,
+    current_user: User = Depends(get_current_active_user),
+    tenant_id: UUID | None = Depends(get_current_tenant_id),
+):
+    """Per-module session counts, completion rates and average scores."""
+    data = await _svc.get_module_performance(tenant_id=tenant_id, days=days)
+    return {"items": data, "period_days": days}

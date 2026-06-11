@@ -1,20 +1,29 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
-import { useEffect } from 'react'
+import { useEffect, lazy, Suspense } from 'react'
+import { Loader2 } from 'lucide-react'
 
-// Pages
-import Landing from '@/pages/Landing'
-import Login from '@/pages/Login'
-import Register from '@/pages/Register'
-import Dashboard from '@/pages/Dashboard'
-import Modules from '@/pages/Modules'
-import CoachingSession from '@/pages/CoachingSession'
-import RoleplaySession from '@/pages/RoleplaySession'
-import FeedbackReport from '@/pages/FeedbackReport'
-import KnowledgeBase from '@/pages/KnowledgeBase'
-import Analytics from '@/pages/Analytics'
-import Profile from '@/pages/Profile'
+// Lazy-loaded pages — each splits into its own chunk
+const Landing = lazy(() => import('@/pages/Landing'))
+const Login = lazy(() => import('@/pages/Login'))
+const Register = lazy(() => import('@/pages/Register'))
+const Dashboard = lazy(() => import('@/pages/Dashboard'))
+const Modules = lazy(() => import('@/pages/Modules'))
+const CoachingSession = lazy(() => import('@/pages/CoachingSession'))
+const RoleplaySession = lazy(() => import('@/pages/RoleplaySession'))
+const FeedbackReport = lazy(() => import('@/pages/FeedbackReport'))
+const KnowledgeBase = lazy(() => import('@/pages/KnowledgeBase'))
+const Analytics = lazy(() => import('@/pages/Analytics'))
+const Profile = lazy(() => import('@/pages/Profile'))
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  )
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user)
@@ -30,20 +39,22 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Landing />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/modules" element={<ProtectedRoute><Modules /></ProtectedRoute>} />
-        <Route path="/sessions/coaching/:sessionId" element={<ProtectedRoute><CoachingSession /></ProtectedRoute>} />
-        <Route path="/sessions/roleplay/:sessionId" element={<ProtectedRoute><RoleplaySession /></ProtectedRoute>} />
-        <Route path="/feedback/:reportId" element={<ProtectedRoute><FeedbackReport /></ProtectedRoute>} />
-        <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBase /></ProtectedRoute>} />
-        <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
-        <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/modules" element={<ProtectedRoute><Modules /></ProtectedRoute>} />
+          <Route path="/sessions/coaching/:sessionId" element={<ProtectedRoute><CoachingSession /></ProtectedRoute>} />
+          <Route path="/sessions/roleplay/:sessionId" element={<ProtectedRoute><RoleplaySession /></ProtectedRoute>} />
+          <Route path="/feedback/:reportId" element={<ProtectedRoute><FeedbackReport /></ProtectedRoute>} />
+          <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBase /></ProtectedRoute>} />
+          <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }

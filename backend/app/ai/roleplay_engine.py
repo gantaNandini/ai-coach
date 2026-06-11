@@ -101,7 +101,15 @@ class RoleplayEngine:
             persona_system_prompt = persona_obj.system_prompt
             scenario = session_context.get("scenario_prompt")
             
+            # Load roleplay_system template from DB, fallback to default
             prompt_template = self._get_default_roleplay_template()
+            templates = getattr(mv_with_def, "prompt_templates", None) or []
+            for t in templates:
+                if getattr(t, "template_type", None) in ("roleplay_system", "roleplay_turn"):
+                    body = getattr(t, "template_body", None)
+                    if body:
+                        prompt_template = body
+                        break
             
             system_prompt = self._prompt_builder.build_roleplay_prompt(
                 template=prompt_template,

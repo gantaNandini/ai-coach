@@ -14,6 +14,7 @@ export default function RoleplaySession() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [done, setDone] = useState(false)
+  const [feedbackReportId, setFeedbackReportId] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const { data: session } = useQuery({
@@ -43,7 +44,8 @@ export default function RoleplaySession() {
   }
 
   const handleComplete = async () => {
-    await sessionsApi.completeRoleplay(sessionId!)
+    const { data } = await sessionsApi.completeRoleplay(sessionId!)
+    setFeedbackReportId(data.feedback_report_id || null)
     setDone(true)
   }
 
@@ -52,10 +54,19 @@ export default function RoleplaySession() {
       <div className="max-w-lg mx-auto text-center py-20">
         <CheckCircle className="h-14 w-14 text-green-500 mx-auto mb-5" />
         <h2 className="text-2xl font-bold mb-3">Roleplay Complete!</h2>
-        <p className="text-muted-foreground mb-8">Great practice session. Coaching notes will appear in your feedback.</p>
-        <button onClick={() => navigate('/dashboard')} className="px-6 py-3 bg-primary text-primary-foreground rounded-lg font-medium">
-          Back to dashboard
-        </button>
+        <p className="text-muted-foreground mb-8">Great practice. Your AI feedback report is ready.</p>
+        <div className="flex gap-3 justify-center">
+          {feedbackReportId && (
+            <button onClick={() => navigate(`/feedback/${feedbackReportId}`)}
+              className="px-6 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90">
+              View Feedback Report
+            </button>
+          )}
+          <button onClick={() => navigate('/dashboard')}
+            className="px-6 py-3 bg-secondary text-secondary-foreground rounded-lg font-medium hover:bg-secondary/80">
+            Dashboard
+          </button>
+        </div>
       </div>
     </Layout>
   )

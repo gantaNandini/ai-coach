@@ -36,7 +36,20 @@ async def list_modules(
     result = await _svc.list_modules(
         tenant_id=tenant_id, status=module_status, page=page, page_size=page_size
     )
-    return {"items": [{"id": str(m.id), "key": m.key, "name": m.name, "status": m.status} for m in result.items], "total": result.total}
+    return {
+        "items": [
+            {
+                "id": str(m.id),
+                "key": m.key,
+                "name": m.name,
+                "status": m.status,
+                "blurb": m.blurb,
+                "icon": m.icon,
+            }
+            for m in result.items
+        ],
+        "total": result.total,
+    }
 
 
 @router.get("/{module_id}")
@@ -44,9 +57,30 @@ async def get_module(
     module_id: UUID,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Get a coaching module by ID."""
+    """Get a coaching module by ID with full version details including intake_schema and framework steps."""
+    from app.database.unit_of_work import UnitOfWork
     m = await _svc.get_module(module_id)
-    return {"id": str(m.id), "key": m.key, "name": m.name, "status": m.status, "blurb": m.blurb}
+    result = {"id": str(m.id), "key": m.key, "name": m.name, "status": m.status, "blurb": m.blurb}
+    # Enrich with current version details
+    try:
+        async with UnitOfWork() as uow:
+            mv = await uow.module_versions.get_current_version_with_definition(module_id)
+            if mv:
+                result["framework_name"] = mv.framework_name or ""
+                result["intake_schema"] = mv.intake_schema or []
+                result["scoring_rubric"] = mv.scoring_rubric or {}
+                result["version_id"] = str(mv.id)
+                result["version_number"] = mv.version_number
+                result["framework_steps"] = [
+                    {"id": str(s.id), "step_key": s.step_key, "title": s.title,
+                     "description": s.description, "step_order": s.step_order}
+                    for s in (mv.framework_steps or [])
+                ]
+    except Exception:
+        result["framework_name"] = ""
+        result["intake_schema"] = []
+        result["scoring_rubric"] = {}
+    return result
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)

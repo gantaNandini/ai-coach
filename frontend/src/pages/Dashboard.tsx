@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { TrendingUp, Award, MessageSquare, Flame, BookOpen, ArrowRight, Loader2 } from 'lucide-react'
 import Layout from '@/components/Layout'
-import { progressApi, sessionsApi } from '@/lib/api'
+import { progressApi, sessionsApi, modulesApi } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 
 export default function Dashboard() {
@@ -17,6 +17,15 @@ export default function Dashboard() {
     queryKey: ['sessions', 'coaching'],
     queryFn: () => sessionsApi.listCoaching({ page_size: 5 }).then(r => r.data),
   })
+
+  const { data: modules } = useQuery({
+    queryKey: ['modules'],
+    queryFn: () => modulesApi.list({ status: 'published' }).then(r => r.data),
+  })
+
+  // Build module name lookup
+  const moduleNames: Record<string, string> = {}
+  modules?.items?.forEach((m: any) => { moduleNames[m.id] = m.name })
 
   const totalSessions = sessions?.total || 0
   const completed = progress?.reduce((a: number, p: any) => a + p.sessions_completed, 0) || 0
@@ -66,12 +75,16 @@ export default function Dashboard() {
             {sessions?.items?.map((s: any) => (
               <div key={s.id} className="flex items-center justify-between px-6 py-4">
                 <div>
-                  <div className="font-medium text-sm">{s.module_id}</div>
+                  <div className="font-medium text-sm">
+                    {moduleNames[s.module_id] || 'Coaching Session'}
+                  </div>
                   <div className="text-xs text-muted-foreground mt-0.5">{new Date(s.created_at).toLocaleDateString()}</div>
                 </div>
                 <div className="flex items-center gap-3">
                   {s.final_score != null && (
-                    <span className="text-sm font-semibold">{s.final_score.toFixed(0)}%</span>
+                    <span className={`text-sm font-semibold ${Number(s.final_score) >= 80 ? 'text-green-500' : Number(s.final_score) >= 60 ? 'text-yellow-500' : 'text-red-500'}`}>
+                      {Number(s.final_score).toFixed(0)}%
+                    </span>
                   )}
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                     s.status === 'completed' ? 'bg-green-500/10 text-green-600' :
@@ -87,3 +100,4 @@ export default function Dashboard() {
     </Layout>
   )
 }
+

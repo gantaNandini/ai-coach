@@ -202,14 +202,12 @@ class RoleplaySessionService:
     ) -> RoleplaySession:
         """
         Transition paused → active.
-
-        Note: repository does not have an explicit resume method;
-        this is a status update via raw update.
-
-        Raises:
-            NotFoundError       — session not found
-            PermissionDeniedError — session does not belong to user_id
+        Updates session status back to 'active' via direct SQL update.
         """
+        from datetime import datetime, timezone
+        from sqlalchemy import update
+        from app.models.session import RoleplaySession as _RS
+
         async with UnitOfWork() as uow:
             session = await uow.roleplay_sessions.get_by_id(session_id)
             if session is None:
@@ -220,16 +218,16 @@ class RoleplaySessionService:
                     "You do not have permission to resume this session."
                 )
 
-            # Update status to active (manual update via repo base method)
-            from app.repositories.session.roleplay_session_repository import (
-                RoleplaySessionUpdate,
+            await uow.session.execute(
+                update(_RS)
+                .where(_RS.id == session_id)
+                .values(status="active", version=_RS.version + 1)
             )
+            await uow.commit()
 
-            # Direct status update is not supported by the repository;
-            # We must use the base update method with version check
-            # For now, skip resume logic — the repository does not support it.
-            # In production, add a resume_session method to the repo.
-            raise NotImplementedError("Resume not yet implemented in repository.")
+            # Reload and return
+            resumed = await uow.roleplay_sessions.get_by_id(session_id)
+            return resumed or session
 
     async def complete_session(
         self, session_id: UUID, final_score: Decimal | None, user_id: UUID

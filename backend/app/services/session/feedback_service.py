@@ -155,3 +155,35 @@ class FeedbackService:
             report = await uow.feedback_reports.create_report(data)
             await uow.commit()
             return report
+
+    # ── Analytics event helper ────────────────────────────────────────────────
+
+    async def track_session_event(
+        self,
+        event_type: str,
+        session_id: UUID,
+        user_id: UUID,
+        tenant_id: UUID | None,
+        final_score: float | None = None,
+    ) -> None:
+        """
+        Fire a session analytics event (session_started, session_completed, etc.).
+        Designed to be called via asyncio.create_task() — non-blocking.
+        """
+        try:
+            from app.services.analytics.analytics_service import AnalyticsService
+            svc = AnalyticsService()
+            props: dict = {"session_id": str(session_id)}
+            if final_score is not None:
+                props["final_score"] = final_score
+            await svc.track_event(
+                event_type=event_type,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                properties=props,
+                entity_type="coaching_session",
+                entity_id=session_id,
+                session_id_ref=session_id,
+            )
+        except Exception:
+            pass  # analytics must never block the main flow

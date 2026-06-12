@@ -187,15 +187,61 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
         customer_id = data.get("customer")
         subscription_id = data.get("subscription")
         logger.info("[BILLING] Subscription created: user=%s plan=%s", user_id, plan)
-        # TODO: Update tenant.subscription_plan and stripe_customer_id in DB
+        # Update tenant subscription plan in DB
+        if user_id and plan:
+            try:
+                from app.database.unit_of_work import UnitOfWork
+                from uuid import UUID
+                async with UnitOfWork() as uow:
+                    user = await uow.users.get_by_id(UUID(user_id))
+                    if user and user.tenant_id:
+                        tenant = await uow.tenants.get_by_id(user.tenant_id)
+                        if tenant:
+                            tenant.subscription_plan = plan
+                            if customer_id:
+                                tenant.stripe_customer_id = customer_id
+                            if subscription_id:
+                                tenant.stripe_subscription_id = subscription_id
+                    await uow.commit()
+            except Exception as exc:
+                logger.error("[BILLING] Failed to update tenant subscription: %s", exc)
 
     elif event_type == "customer.subscription.deleted":
         logger.info("[BILLING] Subscription cancelled: %s", data.get("id"))
-        # TODO: Downgrade tenant to free tier
+        # Downgrade tenant to free tier
+        customer_id = data.get("customer")
+        if customer_id:
+            try:
+                from app.database.unit_of_work import UnitOfWork
+                from sqlalchemy import text
+                async with UnitOfWork() as uow:
+                    await uow.session.execute(
+                        text("UPDATE tenants SET subscription_plan='free' WHERE stripe_customer_id=:cid"),
+                        {"cid": customer_id},
+                    )
+                    await uow.commit()
+                logger.info("[BILLING] Tenant downgraded to free tier for customer %s", customer_id)
+            except Exception as exc:
+                logger.error("[BILLING] Failed to downgrade tenant: %s", exc)
 
     elif event_type == "invoice.payment_failed":
         logger.warning("[BILLING] Payment failed: %s", data.get("customer"))
-        # TODO: Send payment failure notification to tenant admin
+        # Send payment failure notification to tenant admin (via analytics event for now)
+        customer_id = data.get("customer")
+        if customer_id:
+            try:
+                from app.database.unit_of_work import UnitOfWork
+                from app.repositories.analytics.analytics_repository import AnalyticsEventCreate
+                async with UnitOfWork() as uow:
+                    await uow.analytics.track_event(
+                        AnalyticsEventCreate(
+                            event_type="billing.payment_failed",
+                            properties={"customer_id": customer_id, "invoice": data.get("id")},
+                        )
+                    )
+                    await uow.commit()
+            except Exception as exc:
+                logger.error("[BILLING] Failed to log payment failure event: %s", exc)
 
     return {"status": "received"}
 

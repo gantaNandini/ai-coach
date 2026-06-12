@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.exceptions import AppError
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.request_id import RequestIDMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.tenant import TenantContextMiddleware
 
 logging.basicConfig(
@@ -77,6 +78,7 @@ app.add_middleware(
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(TenantContextMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ── Rate limiting middleware ───────────────────────────────────────────────────

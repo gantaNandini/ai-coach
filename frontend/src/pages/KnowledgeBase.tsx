@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Database, Plus, Upload, FileText, Link as LinkIcon, Trash2, Loader2, ChevronDown, ChevronUp, Check, X, RefreshCw } from 'lucide-react'
+import { Database, Plus, Upload, FileText, Link as LinkIcon, Trash2, Loader2, ChevronDown, ChevronUp, Check, X, RefreshCw, AlertTriangle } from 'lucide-react'
 import Layout from '@/components/Layout'
+import ErrorBoundary from '@/components/ErrorBoundary'
+import { KbListSkeleton } from '@/components/LoadingSkeleton'
 import { knowledgeApi } from '@/lib/api'
 
 function SourceStatusBadge({ status }: { status: string }) {
@@ -26,7 +28,7 @@ export default function KnowledgeBase() {
   const [urlTitle, setUrlTitle] = useState('')
   const [urlValue, setUrlValue] = useState('')
 
-  const { data: kbs, isLoading } = useQuery({
+  const { data: kbs, isLoading, isError } = useQuery({
     queryKey: ['knowledge-bases'],
     queryFn: () => knowledgeApi.list().then(r => r.data),
   })
@@ -95,7 +97,8 @@ export default function KnowledgeBase() {
   }
 
   return (
-    <Layout>
+    <ErrorBoundary>
+      <Layout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
@@ -124,9 +127,16 @@ export default function KnowledgeBase() {
           </div>
         )}
 
-        {isLoading && <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
+        {isLoading && <KbListSkeleton />}
 
-        {kbs?.items?.length === 0 && !isLoading && (
+        {isError && !isLoading && (
+          <div className="flex items-center gap-3 p-6 bg-card border border-border rounded-xl text-muted-foreground">
+            <AlertTriangle className="h-5 w-5 text-destructive opacity-70 flex-shrink-0" />
+            <p className="text-sm">Failed to load knowledge bases. Please refresh the page.</p>
+          </div>
+        )}
+
+        {kbs?.items?.length === 0 && !isLoading && !isError && (
           <div className="text-center py-20 text-muted-foreground">
             <Database className="h-12 w-12 mx-auto mb-4 opacity-20" />
             <p>No knowledge bases yet. Create one to upload documents.</p>
@@ -235,5 +245,6 @@ export default function KnowledgeBase() {
         </div>
       </div>
     </Layout>
+    </ErrorBoundary>
   )
 }

@@ -24,7 +24,11 @@ logger = logging.getLogger(__name__)
 def _pgvector_available() -> bool:
     """Check if pgvector extension is loaded at runtime."""
     from app.core.startup import startup_status
-    return startup_status.get("pgvector") == "ok"
+    status = startup_status.get("pgvector", "unknown")
+    # Only "ok" means it is installed; anything else (unknown, not_installed, error:...) means
+    # we fall back to full-text search.  "unknown" happens when startup checks haven't run yet
+    # (e.g. in test contexts that pre-seed startup_status).
+    return status == "ok"
 
 
 class RetrievalService:
@@ -119,45 +123,50 @@ class RetrievalService:
         from app.models.knowledge import KnowledgeChunk
 
         try:
-            sql = text("""
+            # Build fully inline SQL — no bind params to avoid asyncpg cast issues
+            # All values are validated: UUIDs (safe), query string (passed separately)
+            kb_id_strs = ", ".join(f"'{str(k)}'::uuid" for k in kb_ids)
+            tenant_str = str(tenant_id)
+
+            # Use $1 positional for query string only (safe — user-controlled query text)
+            sql = text(f"""
                 SELECT id,
-                       ts_rank(
-                           to_tsvector('english', content),
-                           plainto_tsquery('english', :query)
-                       ) AS rank
+                       ts_rank(to_tsvector('english', content), plainto_tsquery('english', :q)) AS rank,
+                       content,
+                       chunk_index,
+                       kb_id,
+                       source_id,
+                       metadata,
+                       created_at,
+                       updated_at
                 FROM knowledge_chunks
-                WHERE tenant_id = :tenant_id
-                  AND kb_id = ANY(:kb_ids)
-                  AND to_tsvector('english', content) @@ plainto_tsquery('english', :query)
+                WHERE tenant_id = '{tenant_str}'::uuid
+                  AND kb_id = ANY(ARRAY[{kb_id_strs}])
+                  AND to_tsvector('english', content) @@ plainto_tsquery('english', :q)
                 ORDER BY rank DESC
-                LIMIT :top_k
+                LIMIT {int(top_k)}
             """)
 
-            rows = (await uow.session.execute(sql, {
-                "query": query,
-                "tenant_id": str(tenant_id),
-                "kb_ids": [str(k) for k in kb_ids],
-                "top_k": top_k,
-            })).all()
-
+            rows = (await uow.session.execute(sql, {"q": query})).all()
             if not rows:
                 return []
 
-            from sqlalchemy import select
-            chunk_ids = [r[0] for r in rows]
-            rank_map = {str(r[0]): float(r[1]) for r in rows}
-
-            chunks_result = await uow.session.execute(
-                select(KnowledgeChunk).where(KnowledgeChunk.id.in_(chunk_ids))
-            )
-            chunks_by_id = {str(c.id): c for c in chunks_result.scalars().all()}
-
             results = []
-            for chunk_id_str, rank in sorted(rank_map.items(), key=lambda x: x[1], reverse=True):
-                chunk = chunks_by_id.get(chunk_id_str)
-                if chunk:
-                    # Normalize rank to 0-1 range (ts_rank is typically 0-1 already)
-                    results.append(ChunkSearchResult(chunk=chunk, similarity=min(1.0, rank)))
+            for row in rows:
+                # Build lightweight chunk objects from raw row data — avoids loading the
+                # embedding column through the ORM (which triggers pgvector's _from_db
+                # processor and fails when the DB returns a native list instead of string).
+                chunk = KnowledgeChunk(
+                    id=row[0],
+                    content=row[2],
+                    chunk_index=row[3],
+                    kb_id=row[4],
+                    source_id=row[5],
+                    tenant_id=tenant_id,
+                    metadata_=row[6] or {},
+                )
+                rank = float(row[1])
+                results.append(ChunkSearchResult(chunk=chunk, similarity=min(1.0, rank)))
 
             return results
 

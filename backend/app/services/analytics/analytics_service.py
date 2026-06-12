@@ -187,3 +187,107 @@ class AnalyticsService:
                     "avg_score": float(round(Decimal(str(row.avg_score)), 2)),
                 })
             return results
+
+    # ── Session trend ─────────────────────────────────────────────────────────
+
+    async def get_session_trend(
+        self,
+        tenant_id: UUID | None = None,
+        days: int = 30,
+    ) -> list[dict]:
+        """
+        Daily session counts for the last N days.
+
+        Returns a list of {date, count} dicts sorted ascending by date.
+        Days with no sessions are included with count=0 so the frontend
+        can render a continuous trend line.
+        """
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+
+        async with UnitOfWork() as uow:
+            from sqlalchemy import cast, Date
+            from app.models.session import CoachingSession
+
+            stmt = (
+                select(
+                    cast(CoachingSession.created_at, Date).label("day"),
+                    func.count(CoachingSession.id).label("count"),
+                )
+                .where(CoachingSession.created_at >= since)
+                .group_by(cast(CoachingSession.created_at, Date))
+                .order_by(cast(CoachingSession.created_at, Date))
+            )
+            if tenant_id is not None:
+                stmt = stmt.where(CoachingSession.tenant_id == tenant_id)
+
+            rows = (await uow.session.execute(stmt)).all()
+
+        # Build a dense day-by-day map; fill zeros for missing days
+        from datetime import date as date_type
+
+        count_by_day: dict[str, int] = {str(row.day): row.count for row in rows}
+        result = []
+        for i in range(days):
+            d: date_type = (datetime.now(timezone.utc) - timedelta(days=days - 1 - i)).date()
+            result.append({"date": str(d), "count": count_by_day.get(str(d), 0)})
+        return result
+
+    # ── Leaderboard ───────────────────────────────────────────────────────────
+
+    async def get_leaderboard(
+        self,
+        tenant_id: UUID | None = None,
+        limit: int = 10,
+        days: int = 30,
+    ) -> list[dict]:
+        """
+        Top users by average session score in the last N days.
+
+        Returns list of {rank, user_id, avg_score, sessions_completed}.
+        Only users with at least one completed session are included.
+        """
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+
+        async with UnitOfWork() as uow:
+            from app.models.session import CoachingSession
+            from app.models.user import User
+
+            stmt = (
+                select(
+                    CoachingSession.user_id,
+                    func.count(CoachingSession.id).label("sessions"),
+                    func.avg(CoachingSession.final_score).label("avg_score"),
+                )
+                .where(
+                    CoachingSession.status == "completed",
+                    CoachingSession.final_score.is_not(None),
+                    CoachingSession.created_at >= since,
+                )
+                .group_by(CoachingSession.user_id)
+                .order_by(func.avg(CoachingSession.final_score).desc())
+                .limit(limit)
+            )
+            if tenant_id is not None:
+                stmt = stmt.where(CoachingSession.tenant_id == tenant_id)
+
+            rows = (await uow.session.execute(stmt)).all()
+
+            # Resolve user display names in the same session
+            user_ids = [row.user_id for row in rows]
+            users_result = await uow.session.execute(
+                select(User.id, User.full_name, User.email).where(User.id.in_(user_ids))
+            )
+            user_map = {u.id: {"full_name": u.full_name, "email": u.email}
+                        for u in users_result.all()}
+
+        leaderboard = []
+        for rank, row in enumerate(rows, start=1):
+            user_info = user_map.get(row.user_id, {})
+            leaderboard.append({
+                "rank": rank,
+                "user_id": str(row.user_id),
+                "display_name": user_info.get("full_name") or user_info.get("email", "Unknown"),
+                "sessions_completed": row.sessions,
+                "avg_score": float(round(Decimal(str(row.avg_score or 0)), 2)),
+            })
+        return leaderboard

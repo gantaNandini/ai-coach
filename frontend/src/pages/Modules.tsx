@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
-import { BookOpen, Play, Loader2, MessageSquare, ChevronDown, ChevronUp, GitBranch } from 'lucide-react'
+import { useNavigate, Link } from 'react-router-dom'
+import { BookOpen, Play, Loader2, MessageSquare, ChevronDown, ChevronUp, GitBranch, Plus } from 'lucide-react'
 import Layout from '@/components/Layout'
 import { modulesApi, sessionsApi } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth'
 
 const FRAMEWORK_COLORS: Record<string, string> = {
   SBI: 'bg-blue-500/10 text-blue-600',

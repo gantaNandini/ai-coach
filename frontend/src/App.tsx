@@ -18,6 +18,7 @@ const Analytics = lazy(() => import('@/pages/Analytics'))
 const Profile = lazy(() => import('@/pages/Profile'))
 const Admin = lazy(() => import('@/pages/Admin'))
 const Billing = lazy(() => import('@/pages/Billing'))
+const ModuleBuilder = lazy(() => import('@/pages/ModuleBuilder'))
 
 function PageLoader() {
   return (
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
           <Route path="/billing" element={<ProtectedRoute><Billing /></ProtectedRoute>} />
+          <Route path="/modules/new" element={<ProtectedRoute><ModuleBuilder /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

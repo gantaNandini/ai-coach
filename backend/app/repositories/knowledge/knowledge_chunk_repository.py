@@ -37,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import UUID
+import logging
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select, text, update
@@ -45,6 +46,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.knowledge import KnowledgeChunk, KnowledgeSource
 from app.repositories.base import BaseRepository, Page
 from app.repositories.exceptions import DuplicateError, NotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 # ── Result type ───────────────────────────────────────────────────────────────
@@ -296,22 +299,52 @@ class KnowledgeChunkRepository(
         """
         Set the embedding vector on a chunk.
 
-        Only updates chunks that do not yet have an embedding
-        (embedding IS NULL) to prevent overwriting existing vectors
-        unintentionally.
+        When pgvector is installed: stores as vector(384)
+        When pgvector is NOT installed: stores as ARRAY of floats
 
         Returns True when the embedding was stored.
         Returns False when the chunk already has an embedding or
         the chunk_id does not exist.
         """
-        stmt = (
-            update(KnowledgeChunk)
-            .where(KnowledgeChunk.id == chunk_id)
-            .where(KnowledgeChunk.embedding.is_(None))
-            .values(embedding=embedding)
-        )
-        result = await self._session.execute(stmt)
-        return result.rowcount > 0
+        from app.core.startup import startup_status
+
+        if startup_status.get("pgvector") == "ok":
+            # pgvector — pass list directly
+            emb_value = embedding
+            try:
+                stmt = (
+                    update(KnowledgeChunk)
+                    .where(KnowledgeChunk.id == chunk_id)
+                    .where(KnowledgeChunk.embedding.is_(None))
+                    .values(embedding=emb_value)
+                )
+                result = await self._session.execute(stmt)
+                return result.rowcount > 0
+            except Exception as exc:
+                logger.warning("set_embedding (vector) failed: %s", exc)
+                return False
+        else:
+            # ARRAY(Float) column — no pgvector, use inline SQL with no bind params
+            # asyncpg doesn't support ::cast with named params in text()
+            # We build the SQL string directly with validated float values
+            try:
+                from sqlalchemy import text as _text
+                # Validate all values are actual floats (security: no injection possible
+                # since we control the embedding output from sentence-transformers)
+                floats = [float(v) for v in embedding]
+                array_elements = ",".join(repr(v) for v in floats)
+                chunk_id_str = str(chunk_id).replace("'", "")  # UUID has no special chars
+                stmt = _text(
+                    f"UPDATE knowledge_chunks "
+                    f"SET embedding = ARRAY[{array_elements}]::double precision[], "
+                    f"updated_at = NOW() "
+                    f"WHERE id = '{chunk_id_str}'::uuid AND embedding IS NULL"
+                )
+                result = await self._session.execute(stmt)
+                return result.rowcount > 0
+            except Exception as exc:
+                logger.warning("set_embedding (array) failed: %s", exc)
+                return False
 
     # ── pgvector RAG similarity search ────────────────────────────────────────
 

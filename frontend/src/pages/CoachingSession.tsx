@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Send, Loader2, CheckCircle, X } from 'lucide-react'
+import { Send, Loader2, CheckCircle, X, Mic, MicOff, Square } from 'lucide-react'
 import Layout from '@/components/Layout'
-import { sessionsApi } from '@/lib/api'
+import { sessionsApi, api } from '@/lib/api'
 
 interface IntakeField {
   field_key: string
@@ -20,6 +20,10 @@ export default function CoachingSession() {
   const [submitting, setSubmitting] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [feedbackId, setFeedbackId] = useState<string | null>(null)
+  const [recordingField, setRecordingField] = useState<string | null>(null)
+  const [transcribing, setTranscribing] = useState<string | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
   const { data: session, isLoading } = useQuery({
     queryKey: ['coaching-session', sessionId],
@@ -41,6 +45,43 @@ export default function CoachingSession() {
   const allRequiredFilled = intakeFields
     .filter(f => f.required)
     .every(f => intakeData[f.field_key]?.trim())
+
+  const startRecording = async (fieldKey: string) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      audioChunksRef.current = []
+      recorder.ondataavailable = e => audioChunksRef.current.push(e.data)
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        setTranscribing(fieldKey)
+        try {
+          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+          const form = new FormData()
+          form.append('file', blob, 'recording.webm')
+          form.append('field_name', fieldKey)
+          const res = await api.post(`/sessions/${sessionId}/intake/voice-field`, form)
+          const text = res.data?.transcription || ''
+          if (text) setIntakeData(prev => ({ ...prev, [fieldKey]: text }))
+        } catch {
+          // If transcription fails, the audio was captured but not transcribed
+          // Field stays empty — user can type manually
+        } finally {
+          setTranscribing(null)
+        }
+      }
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      setRecordingField(fieldKey)
+    } catch {
+      alert('Microphone access denied. Please allow microphone access and try again.')
+    }
+  }
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop()
+    setRecordingField(null)
+  }
 
   const handleComplete = async () => {
     if (!allRequiredFilled) return
@@ -133,6 +174,40 @@ export default function CoachingSession() {
                   placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
                   className="w-full bg-transparent text-sm placeholder-muted-foreground resize-none focus:outline-none"
                 />
+              ) : field.type === 'voice' ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    {recordingField === field.field_key ? (
+                      <button
+                        onClick={stopRecording}
+                        className="flex items-center gap-2 px-3 py-2 bg-red-500 text-white rounded-lg text-sm font-medium animate-pulse"
+                      >
+                        <Square className="h-4 w-4" /> Stop Recording
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => startRecording(field.field_key)}
+                        disabled={!!recordingField || transcribing === field.field_key}
+                        className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50"
+                      >
+                        {transcribing === field.field_key
+                          ? <><Loader2 className="h-4 w-4 animate-spin" /> Transcribing...</>
+                          : <><Mic className="h-4 w-4" /> Record</>
+                        }
+                      </button>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {recordingField === field.field_key ? 'Recording… click Stop when done' : 'Or type below'}
+                    </span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={intakeData[field.field_key] || ''}
+                    onChange={e => setIntakeData(prev => ({ ...prev, [field.field_key]: e.target.value }))}
+                    placeholder={transcribing === field.field_key ? 'Transcribing...' : field.placeholder || `Speak or type ${field.label.toLowerCase()}...`}
+                    className="w-full bg-transparent text-sm placeholder-muted-foreground resize-none focus:outline-none"
+                  />
+                </div>
               ) : (
                 <input
                   type="text"

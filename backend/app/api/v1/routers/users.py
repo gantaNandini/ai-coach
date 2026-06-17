@@ -90,3 +90,29 @@ async def reactivate_user(
     """Reactivate a deactivated user account."""
     await _svc.reactivate_user(user_id)
     return MessageResponse(message="User reactivated")
+
+
+@router.delete("/me", response_model=MessageResponse)
+async def delete_me(
+    current_user: User = Depends(get_current_active_user),
+):
+    """Deactivate (soft-delete) the current user's own account."""
+    await _svc.deactivate_user(current_user.id, admin_user_id=current_user.id)
+    return MessageResponse(message="Account deleted")
+
+
+@router.post("/me/change-password", response_model=MessageResponse)
+async def change_my_password(
+    body: dict,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Change password via /users/me/change-password (alias for /auth/change-password)."""
+    from app.schemas.auth.auth_request import PasswordChangeRequest
+    from app.services.auth.auth_service import AuthService
+    svc = AuthService()
+    await svc.change_password(
+        user_id=current_user.id,
+        current_password=body.get("current_password", ""),
+        new_password=body.get("new_password", ""),
+    )
+    return MessageResponse(message="Password changed successfully")

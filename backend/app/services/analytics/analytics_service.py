@@ -38,7 +38,9 @@ class AnalyticsService:
         session_id_ref: UUID | None = None,
     ) -> None:
         """Track a behavioural event (fire-and-forget safe)."""
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             await uow.analytics.track_event(
                 AnalyticsEventCreate(
                     event_type=event_type,
@@ -73,7 +75,9 @@ class AnalyticsService:
         # Use a sentinel UUID for NULL tenant_id (global/superadmin view)
         effective_tenant = tenant_id or UUID("00000000-0000-0000-0000-000000000000")
 
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             session = uow.session
 
             # ── Session funnel from analytics events ──────────────────────────
@@ -154,7 +158,9 @@ class AnalyticsService:
         """
         since = datetime.now(timezone.utc) - timedelta(days=days)
 
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             from sqlalchemy import case, cast, Float
             from app.models.session import CoachingSession
             from app.models.module import CoachingModule
@@ -204,7 +210,9 @@ class AnalyticsService:
         """
         since = datetime.now(timezone.utc) - timedelta(days=days)
 
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             from sqlalchemy import cast, Date
             from app.models.session import CoachingSession
 
@@ -248,7 +256,9 @@ class AnalyticsService:
         """
         since = datetime.now(timezone.utc) - timedelta(days=days)
 
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             from app.models.session import CoachingSession
             from app.models.user import User
 

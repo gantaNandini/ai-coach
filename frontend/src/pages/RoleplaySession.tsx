@@ -44,9 +44,14 @@ export default function RoleplaySession() {
   }
 
   const handleComplete = async () => {
-    const { data } = await sessionsApi.completeRoleplay(sessionId!)
-    setFeedbackReportId(data.feedback_report_id || null)
-    setDone(true)
+    try {
+      const { data } = await sessionsApi.completeRoleplay(sessionId!)
+      setFeedbackReportId(data.feedback_report_id || null)
+      setDone(true)
+    } catch {
+      // Still mark as done — user can navigate to dashboard
+      setDone(true)
+    }
   }
 
   if (done) return (

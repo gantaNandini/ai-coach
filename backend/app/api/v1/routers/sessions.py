@@ -1,7 +1,7 @@
 from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, status, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, status, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel
 from app.schemas.common import MessageResponse
 from app.schemas.session.coaching_session import (
@@ -81,6 +81,13 @@ async def create_coaching_session(
         user_id=current_user.id,
         tenant_id=tenant_id,
         final_score=None,
+    ))
+    # Audit log
+    from app.services.audit_service import write_audit_log_background
+    _asyncio.create_task(write_audit_log_background(
+        action="session_created", tenant_id=tenant_id, user_id=current_user.id,
+        resource_type="coaching_session", resource_id=str(s.id),
+        metadata={"module_id": str(body.module_id)},
     ))
     return _session_dict(s)
 
@@ -272,6 +279,13 @@ async def complete_coaching_session(
         tenant_id=tenant_id,
         final_score=float(final_score),
     ))
+    # Audit log
+    from app.services.audit_service import write_audit_log_background
+    _asyncio.create_task(write_audit_log_background(
+        action="session_completed", tenant_id=tenant_id, user_id=current_user.id,
+        resource_type="coaching_session", resource_id=str(session_id),
+        metadata={"final_score": float(final_score)},
+    ))
 
     # Include feedback report ID in response
     result = _session_dict(s)
@@ -294,6 +308,65 @@ async def complete_coaching_session(
     except Exception:
         pass
     return result
+
+
+@router.post("/coaching/{session_id}/intake/voice-field")
+async def transcribe_voice_intake(
+    session_id: UUID,
+    field_name: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Receive an audio blob from the voice intake recorder.
+    Attempts transcription via Whisper (local via Ollama) or returns
+    a placeholder directing the user to type manually.
+    """
+    import tempfile, os, logging as _log
+    _logger = _log.getLogger("ai_coach.voice")
+
+    audio_bytes = await file.read()
+    if len(audio_bytes) < 100:
+        return {"transcription": "", "field_name": field_name, "status": "empty"}
+
+    # Try Whisper via Ollama (if available)
+    try:
+        import httpx
+        from app.core.config import settings
+        # Write to temp file
+        suffix = os.path.splitext(file.filename or "recording.webm")[-1] or ".webm"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+        try:
+            # Attempt OpenAI-compatible /audio/transcriptions on Ollama
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                with open(tmp_path, "rb") as af:
+                    resp = await client.post(
+                        f"{settings.OLLAMA_BASE_URL}/v1/audio/transcriptions",
+                        files={"file": (file.filename or "recording.webm", af, file.content_type or "audio/webm")},
+                        data={"model": "whisper"},
+                    )
+                if resp.status_code == 200:
+                    text = resp.json().get("text", "").strip()
+                    _logger.info("[VOICE] Transcribed %d bytes for field=%s", len(audio_bytes), field_name)
+                    return {"transcription": text, "field_name": field_name, "status": "transcribed"}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+    except Exception as exc:
+        _logger.warning("[VOICE] Whisper transcription failed: %s — returning empty", exc)
+
+    # Whisper not available — audio captured, transcription pending
+    # User can type manually; the frontend already handles this gracefully
+    return {
+        "transcription": "",
+        "field_name": field_name,
+        "status": "pending_transcription",
+        "message": "Audio captured. Whisper transcription not available — please type your response.",
+    }
 
 
 @router.post("/coaching/{session_id}/abandon")

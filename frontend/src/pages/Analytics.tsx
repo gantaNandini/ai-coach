@@ -1,44 +1,46 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import { TrendingUp, Users, MessageSquare, Zap, Award, AlertTriangle } from 'lucide-react'
+import { TrendingUp, Users, MessageSquare, Award, AlertTriangle, Calendar } from 'lucide-react'
 import Layout from '@/components/Layout'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import { StatCardsSkeleton, ChartSkeleton } from '@/components/LoadingSkeleton'
 import { api } from '@/lib/api'
 
 const COLORS = ['hsl(var(--primary))', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6']
+const DATE_OPTIONS = [
+  { label: 'Last 7 days', value: 7 },
+  { label: 'Last 30 days', value: 30 },
+  { label: 'Last 90 days', value: 90 },
+]
 
 export default function Analytics() {
+  const [days, setDays] = useState(30)
+
   const { data: dashboard, isLoading, isError } = useQuery({
-    queryKey: ['analytics-dashboard'],
-    queryFn: () => api.get('/analytics/dashboard').then(r => r.data),
+    queryKey: ['analytics-dashboard', days],
+    queryFn: () => api.get('/analytics/dashboard', { params: { days } }).then(r => r.data),
     refetchInterval: 30000,
   })
 
-  const { data: sessions } = useQuery({
-    queryKey: ['sessions-all'],
-    queryFn: () => api.get('/sessions/coaching', { params: { page_size: 100 } }).then(r => r.data),
+  const { data: trendData } = useQuery({
+    queryKey: ['session-trend', days],
+    queryFn: () => api.get('/analytics/session-trend', { params: { days } }).then(r => r.data),
   })
 
   const { data: modulePerf } = useQuery({
-    queryKey: ['module-performance'],
-    queryFn: () => api.get('/analytics/module-performance').then(r => r.data),
+    queryKey: ['module-performance', days],
+    queryFn: () => api.get('/analytics/module-performance', { params: { days } }).then(r => r.data),
   })
 
-  // Score trend from real completed sessions
-  const scoreTrend = (sessions?.items || [])
-    .filter((s: any) => s.final_score != null && s.status === 'completed')
-    .slice(-15)
-    .map((s: any, i: number) => ({
-      session: i + 1,
-      score: parseFloat(Number(s.final_score).toFixed(1)),
-      date: new Date(s.created_at).toLocaleDateString('en', { month: 'short', day: 'numeric' }),
-    }))
+  const sessionTrend = (trendData?.items || []).map((d: any) => ({
+    date: new Date(d.date).toLocaleDateString('en', { month: 'short', day: 'numeric' }),
+    count: d.count,
+  }))
 
-  // Session funnel data for pie chart
   const funnelData = dashboard ? [
     { name: 'Completed', value: dashboard.sessions_completed },
     { name: 'In Progress', value: Math.max(0, dashboard.sessions_started - dashboard.sessions_completed - dashboard.sessions_abandoned) },
@@ -56,18 +58,36 @@ export default function Analytics() {
     <ErrorBoundary>
       <Layout>
         <div className="space-y-8">
-          <div>
-            <h1 className="text-2xl font-bold">Analytics</h1>
-            <p className="text-muted-foreground mt-1">
-              Real-time coaching performance — last {dashboard?.period_days ?? 30} days
-            </p>
+          {/* Header + date range */}
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h1 className="text-2xl font-bold">Analytics</h1>
+              <p className="text-muted-foreground mt-1">
+                Real-time coaching performance
+              </p>
+            </div>
+            <div className="flex items-center gap-2 bg-card border border-border rounded-lg p-1">
+              <Calendar className="h-4 w-4 text-muted-foreground ml-2" />
+              {DATE_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setDays(opt.value)}
+                  className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                    days === opt.value
+                      ? 'bg-primary text-primary-foreground font-medium'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {isLoading && (
             <div className="space-y-6">
               <StatCardsSkeleton />
               <ChartSkeleton height={240} />
-              <ChartSkeleton height={200} />
             </div>
           )}
 
@@ -91,88 +111,73 @@ export default function Analytics() {
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Completion rate */}
-                {dashboard && (
-                  <div className="bg-card border border-border rounded-xl p-6">
-                    <h2 className="font-semibold mb-4">Completion Rate</h2>
-                    <div className="flex items-center gap-4">
-                      <div className={`text-4xl font-bold ${dashboard.completion_rate >= 70 ? 'text-green-500' : dashboard.completion_rate >= 40 ? 'text-yellow-500' : 'text-red-500'}`}>
-                        {Number(dashboard.completion_rate ?? 0).toFixed(1)}%
-                      </div>
-                      <div>
-                        <div className="text-sm text-muted-foreground">
-                          {dashboard.sessions_completed} completed of {dashboard.sessions_started} started
-                        </div>
-                        <div className="mt-2 h-2 w-40 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full bg-primary rounded-full transition-all"
-                            style={{ width: `${Math.min(100, dashboard.completion_rate ?? 0)}%` }} />
-                        </div>
-                      </div>
-                    </div>
-                    {funnelData.length > 0 && (
-                      <div className="mt-6">
-                        <ResponsiveContainer width="100%" height={160}>
-                          <PieChart>
-                            <Pie data={funnelData} cx="50%" cy="50%" innerRadius={40} outerRadius={65}
-                              paddingAngle={3} dataKey="value">
-                              {funnelData.map((_, i) => (
-                                <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                              ))}
-                            </Pie>
-                            <Tooltip />
-                            <Legend iconSize={8} wrapperStyle={{ fontSize: '12px' }} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Avg score gauge */}
-                {dashboard && (
-                  <div className="bg-card border border-border rounded-xl p-6">
-                    <h2 className="font-semibold mb-4">Average Score</h2>
-                    <div className="flex items-center gap-4">
-                      <div className={`text-4xl font-bold ${Number(dashboard.avg_score) >= 75 ? 'text-green-500' : Number(dashboard.avg_score) >= 50 ? 'text-yellow-500' : 'text-muted-foreground'}`}>
-                        {dashboard.avg_score ? `${Number(dashboard.avg_score).toFixed(1)}%` : '—'}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {dashboard.avg_score > 0 ? 'across all completed sessions' : 'Complete sessions to see average score'}
-                      </div>
-                    </div>
-                    {dashboard.avg_score > 0 && (
-                      <div className="mt-4 h-3 w-full bg-muted rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all ${Number(dashboard.avg_score) >= 75 ? 'bg-green-500' : Number(dashboard.avg_score) >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                          style={{ width: `${Math.min(100, Number(dashboard.avg_score))}%` }} />
-                      </div>
-                    )}
-                    {dashboard.total_ai_tokens > 0 && (
-                      <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-                        <Zap className="h-4 w-4 text-orange-400" />
-                        {dashboard.total_ai_tokens.toLocaleString()} AI tokens used
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Score trend */}
-              {scoreTrend.length > 1 && (
+              {/* Sessions per day — line chart from real /session-trend endpoint */}
+              {sessionTrend.length > 1 && (
                 <div className="bg-card border border-border rounded-xl p-6">
-                  <h2 className="font-semibold mb-6">Score Trend</h2>
+                  <h2 className="font-semibold mb-6">Sessions per Day</h2>
                   <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={scoreTrend}>
+                    <LineChart data={sessionTrend}>
                       <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                       <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                      <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} tickFormatter={v => `${v}%`} />
-                      <Tooltip formatter={(v: any) => [`${v}%`, 'Score']} />
-                      <Line type="monotone" dataKey="score" stroke="hsl(var(--primary))" strokeWidth={2}
-                        dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="count" name="Sessions"
+                        stroke="hsl(var(--primary))" strokeWidth={2}
+                        dot={{ r: 3 }} activeDot={{ r: 5 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
               )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Completion funnel */}
+                {dashboard && dashboard.sessions_started > 0 && (
+                  <div className="bg-card border border-border rounded-xl p-6">
+                    <h2 className="font-semibold mb-4">Completion Rate</h2>
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className={`text-4xl font-bold ${dashboard.completion_rate >= 70 ? 'text-green-500' : dashboard.completion_rate >= 40 ? 'text-yellow-500' : 'text-red-500'}`}>
+                        {Number(dashboard.completion_rate ?? 0).toFixed(1)}%
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {dashboard.sessions_completed} completed of {dashboard.sessions_started} started
+                      </div>
+                    </div>
+                    {funnelData.length > 0 && (
+                      <ResponsiveContainer width="100%" height={160}>
+                        <PieChart>
+                          <Pie data={funnelData} cx="50%" cy="50%" innerRadius={40} outerRadius={65}
+                            paddingAngle={3} dataKey="value">
+                            {funnelData.map((_, i) => (
+                              <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                          <Legend iconSize={8} wrapperStyle={{ fontSize: '12px' }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                )}
+
+                {/* Avg score */}
+                {dashboard && (
+                  <div className="bg-card border border-border rounded-xl p-6">
+                    <h2 className="font-semibold mb-4">Average Score</h2>
+                    <div className={`text-4xl font-bold mb-3 ${Number(dashboard.avg_score) >= 75 ? 'text-green-500' : Number(dashboard.avg_score) >= 50 ? 'text-yellow-500' : 'text-muted-foreground'}`}>
+                      {dashboard.avg_score ? `${Number(dashboard.avg_score).toFixed(1)}%` : '—'}
+                    </div>
+                    {dashboard.avg_score > 0 && (
+                      <div className="h-3 w-full bg-muted rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${Number(dashboard.avg_score) >= 75 ? 'bg-green-500' : Number(dashboard.avg_score) >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                          style={{ width: `${Math.min(100, Number(dashboard.avg_score))}%` }} />
+                      </div>
+                    )}
+                    <p className="text-sm text-muted-foreground mt-3">
+                      {dashboard.avg_score > 0 ? 'Across all completed sessions' : 'Complete sessions to see average score'}
+                    </p>
+                  </div>
+                )}
+              </div>
 
               {/* Module performance */}
               {modulePerf?.items?.length > 0 && (
@@ -187,22 +192,6 @@ export default function Analytics() {
                       <Tooltip formatter={(v: any, name: string) => [`${Number(v).toFixed(1)}%`, name === 'avg_score' ? 'Avg Score' : 'Completion']} />
                       <Bar dataKey="avg_score" name="avg_score" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                       <Bar dataKey="completion_rate" name="completion_rate" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              {/* Recent scores bar chart */}
-              {scoreTrend.length > 0 && (
-                <div className="bg-card border border-border rounded-xl p-6">
-                  <h2 className="font-semibold mb-6">Recent Session Scores</h2>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={scoreTrend}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                      <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                      <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} tickFormatter={v => `${v}%`} />
-                      <Tooltip formatter={(v: any) => [`${v}%`, 'Score']} />
-                      <Bar dataKey="score" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

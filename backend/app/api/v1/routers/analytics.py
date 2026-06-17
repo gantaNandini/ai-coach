@@ -5,6 +5,7 @@ from app.schemas.analytics.events import TrackEventRequest
 from app.schemas.common import MessageResponse
 from app.services.analytics.analytics_service import AnalyticsService
 from app.api.v1.dependencies.auth import get_current_active_user, get_current_tenant_id
+from app.api.v1.dependencies.permissions import require_role
 from app.models.user import User
 
 router = APIRouter()
@@ -35,6 +36,7 @@ async def dashboard(
     days: int = 30,
     current_user: User = Depends(get_current_active_user),
     tenant_id: UUID | None = Depends(get_current_tenant_id),
+    _admin: User = Depends(require_role("admin")),
 ):
     """Get analytics dashboard metrics — real database aggregation."""
     data = await _svc.get_dashboard(tenant_id=tenant_id, days=days)
@@ -49,4 +51,27 @@ async def module_performance(
 ):
     """Per-module session counts, completion rates and average scores."""
     data = await _svc.get_module_performance(tenant_id=tenant_id, days=days)
+    return {"items": data, "period_days": days}
+
+
+@router.get("/session-trend")
+async def session_trend(
+    days: int = 30,
+    current_user: User = Depends(get_current_active_user),
+    tenant_id: UUID | None = Depends(get_current_tenant_id),
+):
+    """Daily session counts for the last N days — for the line chart."""
+    data = await _svc.get_session_trend(tenant_id=tenant_id, days=days)
+    return {"items": data, "period_days": days}
+
+
+@router.get("/leaderboard")
+async def leaderboard(
+    days: int = 30,
+    limit: int = 10,
+    current_user: User = Depends(get_current_active_user),
+    tenant_id: UUID | None = Depends(get_current_tenant_id),
+):
+    """Top users by average score."""
+    data = await _svc.get_leaderboard(tenant_id=tenant_id, days=days, limit=limit)
     return {"items": data, "period_days": days}

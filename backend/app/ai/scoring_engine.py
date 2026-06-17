@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 from uuid import UUID, uuid4
 
-from app.ai.ollama_client import OllamaClient
+from app.ai.llm_factory import LLMClient, get_llm_client
 from app.ai.prompt_builder import PromptBuilder
 from app.core.exceptions import UnprocessableError
 from app.schemas.ai.scoring import (
@@ -33,18 +34,26 @@ class ScoringEngine:
 
     def __init__(
         self,
-        ollama_client: OllamaClient,
-        prompt_builder: PromptBuilder,
+        llm_client: LLMClient | None = None,
+        prompt_builder: PromptBuilder | None = None,
+        # Legacy param name — kept for backwards compatibility
+        ollama_client: LLMClient | None = None,
     ) -> None:
         """
         Initialize scoring engine.
 
         Args:
-            ollama_client: LLM client for scoring
+            llm_client: LLM client for scoring (any LLMClient-compatible object)
             prompt_builder: service for building scoring prompts
+            ollama_client: deprecated alias for llm_client
         """
-        self._ollama = ollama_client
-        self._prompt_builder = prompt_builder
+        self._llm = llm_client or ollama_client or get_llm_client()
+        self._prompt_builder = prompt_builder or PromptBuilder()
+
+    # Legacy attribute alias
+    @property
+    def _ollama(self) -> LLMClient:
+        return self._llm
 
     async def score_session(
         self,
@@ -52,6 +61,7 @@ class ScoringEngine:
         feedback_text: str,
         rubric: dict,
         intake_data: dict,
+        module_version=None,      # REQ-2.1: pass to _get_scoring_template
         rubric_id: UUID | None = None,
         rubric_version: int = 1,
     ) -> CoachingScoreResponse:
@@ -63,6 +73,8 @@ class ScoringEngine:
             feedback_text: feedback text to score
             rubric: scoring rubric with dimensions and weights
             intake_data: learner's intake form submission
+            module_version: optional ModuleVersion object; its prompt_templates
+                are searched first before the generic fallback template (REQ-2.1)
             rubric_id: optional rubric UUID for audit trail
             rubric_version: rubric version for audit trail
 
@@ -72,8 +84,8 @@ class ScoringEngine:
         Raises:
             UnprocessableError: when LLM scoring or parsing fails
         """
-        # Build scoring prompt
-        template = self._get_scoring_template(rubric)
+        # REQ-2.1 fix: pass module_version to _get_scoring_template
+        template = self._get_scoring_template(rubric, module_version)
         
         prompt = self._prompt_builder.build_scoring_prompt(
             template=template,
@@ -84,7 +96,7 @@ class ScoringEngine:
         
         # Generate scoring response from LLM
         try:
-            llm_response = await self._ollama.generate(
+            llm_response = await self._llm.generate(
                 prompt=prompt,
                 system=(
                     "You are an expert assessor evaluating coaching feedback against rubric criteria. "
@@ -141,13 +153,22 @@ class ScoringEngine:
     def _get_scoring_template(self, rubric: dict, module_version=None) -> str:
         """
         Load scoring prompt template from module version's prompt_templates.
-        Falls back to generic template if no 'scoring' type template is seeded.
+
+        Priority (REQ-2.2):
+          1. module_version.prompt_templates with template_type == "scoring"
+          2. Generic fallback (last resort only)
+
+        The ORM field is template_body (not template_text).
+        Falls back to generic template if no 'scoring' type template is found.
         """
         if module_version is not None:
             templates = getattr(module_version, "prompt_templates", None) or []
             for t in templates:
                 if getattr(t, "template_type", None) == "scoring":
-                    return t.template_text
+                    # Use template_body (the correct ORM field name)
+                    body = getattr(t, "template_body", None)
+                    if body:
+                        return body
         # Generic fallback — only used when no module scoring template is seeded
         return """You are scoring the following feedback submission against this rubric:
 

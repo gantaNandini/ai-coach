@@ -46,7 +46,9 @@ class CoachingModuleService:
 
         status can be: "draft", "published", "archived", or None (all).
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             if tenant_id is not None:
                 return await uow.coaching_modules.list_by_tenant(
                     tenant_id, status=status, page=page, page_size=page_size
@@ -67,7 +69,9 @@ class CoachingModuleService:
 
         Used for the learner module catalog.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             return await uow.coaching_modules.list_published(
                 tenant_id=tenant_id, page=page, page_size=page_size
             )
@@ -82,6 +86,8 @@ class CoachingModuleService:
             NotFoundError — module not found or is soft-deleted
         """
         async with UnitOfWork() as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             module = await uow.coaching_modules.get(module_id)
             if module is None:
                 raise NotFoundError("CoachingModule", module_id)
@@ -100,7 +106,9 @@ class CoachingModuleService:
         Raises:
             NotFoundError — module not found for the given scope
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             module = await uow.coaching_modules.get_by_key(
                 key, tenant_id=tenant_id
             )
@@ -126,7 +134,9 @@ class CoachingModuleService:
         Raises:
             ConflictError — key already exists for this tenant scope
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             module = await uow.coaching_modules.create(
                 CoachingModuleCreate(
                     key=key,
@@ -154,6 +164,8 @@ class CoachingModuleService:
             NotFoundError — module not found
         """
         async with UnitOfWork() as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             module = await uow.coaching_modules.update(
                 module_id,
                 CoachingModuleUpdate(
@@ -174,6 +186,8 @@ class CoachingModuleService:
             NotFoundError — module not found
         """
         async with UnitOfWork() as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             await uow.coaching_modules.soft_delete(module_id)
             await uow.commit()
 
@@ -193,6 +207,8 @@ class CoachingModuleService:
             ConflictError       — module is already published
         """
         async with UnitOfWork() as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             module = await uow.coaching_modules.get(module_id)
             if module is None:
                 raise NotFoundError("CoachingModule", module_id)
@@ -216,6 +232,8 @@ class CoachingModuleService:
             ConflictError       — module is already archived
         """
         async with UnitOfWork() as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             module = await uow.coaching_modules.get(module_id)
             if module is None:
                 raise NotFoundError("CoachingModule", module_id)
@@ -236,6 +254,8 @@ class CoachingModuleService:
             NotFoundError — module has no current version
         """
         async with UnitOfWork() as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             version = await uow.module_versions.get_current_version(module_id)
             if version is None:
                 raise NotFoundError("ModuleVersion", f"current for {module_id}")
@@ -252,6 +272,8 @@ class CoachingModuleService:
             NotFoundError — version not found
         """
         async with UnitOfWork() as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             version = await uow.module_versions.get_version_with_definition(
                 version_id
             )

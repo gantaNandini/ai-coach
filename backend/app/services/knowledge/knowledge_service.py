@@ -38,7 +38,7 @@ class KnowledgeBaseService:
         Raises:
             None — empty page returned if no KBs exist
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.knowledge_bases.list_by_tenant(
                 tenant_id, page=page, page_size=page_size
             )
@@ -57,7 +57,7 @@ class KnowledgeBaseService:
         Raises:
             NotFoundError — KB not found or is soft-deleted
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             kb = await uow.knowledge_bases.get_by_id(kb_id, tenant_id=tenant_id)
             if kb is None:
                 raise NotFoundError("KnowledgeBase", kb_id)
@@ -75,16 +75,50 @@ class KnowledgeBaseService:
         module_id: UUID | None = None,
     ) -> KnowledgeBase:
         """
-        Create a new knowledge base.
+        Create a new knowledge base, enforcing plan KB limit.
 
         scope: "tenant" | "module"
         When scope="module", module_id must be set.
 
         Raises:
-            ValidationError — scope/module_id inconsistency (raised by repo)
+            ValidationError — scope/module_id inconsistency
             ConflictError   — name already exists for this tenant
+            PermissionDeniedError — tenant has reached their plan KB limit
         """
-        async with UnitOfWork() as uow:
+        from app.core.exceptions import PermissionDeniedError
+        from sqlalchemy import text
+
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            # ── Plan limit enforcement ────────────────────────────────────────
+            # Read tenant limits with superadmin bypass (GUC IS NULL for tenants query)
+            from sqlalchemy import text as _text
+            # Fetch the tenant row directly — use superadmin bypass since we
+            # need to read the tenants table which has id-based RLS policy.
+            await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'true'"))
+            tenant_result = await uow.session.execute(
+                _text("SELECT max_knowledge_bases FROM tenants WHERE id = :tid"),
+                {"tid": str(tenant_id)},
+            )
+            await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'false'"))
+            tenant_row = tenant_result.fetchone()
+
+            if tenant_row:
+                max_kbs = tenant_row[0]
+                current_count_result = await uow.session.execute(
+                    _text(
+                        "SELECT COUNT(*) FROM knowledge_bases "
+                        "WHERE tenant_id = :tid AND deleted_at IS NULL"
+                    ),
+                    {"tid": str(tenant_id)},
+                )
+                current_count = current_count_result.scalar_one()
+                if current_count >= max_kbs:
+                    raise PermissionDeniedError(
+                        f"Your plan allows a maximum of {max_kbs} knowledge base(s). "
+                        f"You currently have {current_count}. "
+                        "Upgrade your plan to create more."
+                    )
+
             kb = await uow.knowledge_bases.create(
                 KnowledgeBaseCreate(
                     tenant_id=tenant_id,
@@ -103,6 +137,7 @@ class KnowledgeBaseService:
         kb_id: UUID,
         name: str | None = None,
         description: str | None = None,
+        tenant_id: UUID | None = None,
     ) -> KnowledgeBase:
         """
         Apply a partial update to a knowledge base.
@@ -110,7 +145,7 @@ class KnowledgeBaseService:
         Raises:
             NotFoundError — KB not found
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             kb = await uow.knowledge_bases.update(
                 kb_id,
                 KnowledgeBaseUpdate(name=name, description=description),
@@ -118,14 +153,16 @@ class KnowledgeBaseService:
             await uow.commit()
             return kb
 
-    async def delete_knowledge_base(self, kb_id: UUID) -> None:
+    async def delete_knowledge_base(
+        self, kb_id: UUID, tenant_id: UUID | None = None
+    ) -> None:
         """
         Soft-delete a knowledge base.
 
         Raises:
             NotFoundError — KB not found
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             await uow.knowledge_bases.soft_delete(kb_id)
             await uow.commit()
 
@@ -144,7 +181,7 @@ class KnowledgeBaseService:
         This ordering prioritizes module-specific knowledge over
         tenant-wide knowledge.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.knowledge_bases.get_kb_ids_for_retrieval(
                 module_id, tenant_id
             )
@@ -160,7 +197,8 @@ class KnowledgeSourceService:
     # ── Listing ───────────────────────────────────────────────────────────────
 
     async def list_sources(
-        self, kb_id: UUID, page: int = 1, page_size: int = 20
+        self, kb_id: UUID, page: int = 1, page_size: int = 20,
+        tenant_id: UUID | None = None,
     ) -> Page[KnowledgeSource]:
         """
         List sources for a knowledge base.
@@ -171,7 +209,7 @@ class KnowledgeSourceService:
         Raises:
             None — empty page returned if no sources exist
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             sources = await uow.knowledge_bases.get_active_sources(kb_id)
             # Manual pagination since repository returns list, not Page
             start = (page - 1) * page_size
@@ -186,14 +224,16 @@ class KnowledgeSourceService:
 
     # ── Lookup ────────────────────────────────────────────────────────────────
 
-    async def get_source(self, source_id: UUID) -> KnowledgeSource:
+    async def get_source(
+        self, source_id: UUID, tenant_id: UUID | None = None
+    ) -> KnowledgeSource:
         """
         Fetch a knowledge source by id.
 
         Raises:
             NotFoundError — source not found
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             # Use a generic get via session (sources have no dedicated get method)
             source = await uow.session.get(KnowledgeSource, source_id)
             if source is None or source.is_deleted:
@@ -219,7 +259,7 @@ class KnowledgeSourceService:
         Raises:
             NotFoundError — KB not found
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             kb = await uow.knowledge_bases.get_by_id(kb_id, tenant_id=tenant_id)
             if kb is None:
                 raise NotFoundError("KnowledgeBase", kb_id)
@@ -253,7 +293,7 @@ class KnowledgeSourceService:
         Raises:
             NotFoundError — KB not found
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             kb = await uow.knowledge_bases.get_by_id(kb_id, tenant_id=tenant_id)
             if kb is None:
                 raise NotFoundError("KnowledgeBase", kb_id)
@@ -288,7 +328,7 @@ class KnowledgeSourceService:
         Raises:
             NotFoundError — KB not found
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             kb = await uow.knowledge_bases.get_by_id(kb_id, tenant_id=tenant_id)
             if kb is None:
                 raise NotFoundError("KnowledgeBase", kb_id)
@@ -307,14 +347,16 @@ class KnowledgeSourceService:
 
     # ── Delete ────────────────────────────────────────────────────────────────
 
-    async def delete_source(self, source_id: UUID) -> None:
+    async def delete_source(
+        self, source_id: UUID, tenant_id: UUID | None = None
+    ) -> None:
         """
         Soft-delete a knowledge source.
 
         The associated chunks are cleaned up by a background job
         (not cascade-deleted immediately).
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             deleted = await uow.knowledge_bases.soft_delete_source(source_id)
             if not deleted:
                 raise NotFoundError("KnowledgeSource", source_id)

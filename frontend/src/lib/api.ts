@@ -89,4 +89,12 @@ export const knowledgeApi = {
   addText: (kb_id: string, title: string, content: string) => api.post(`/knowledge/${kb_id}/sources/text`, { title, content }),
   addUrl: (kb_id: string, title: string, url: string) => api.post(`/knowledge/${kb_id}/sources/url`, { title, url }),
   deleteSource: (kb_id: string, source_id: string) => api.delete(`/knowledge/${kb_id}/sources/${source_id}`),
+  // File upload — uses axios so the auth interceptor fires correctly
+  uploadFile: (kb_id: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post(`/knowledge/${kb_id}/sources/upload`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
 }

@@ -55,7 +55,9 @@ async def run_ingestion(
     logger.info("[INGEST] Starting ingestion: source=%s type=%s", source_id, source_type)
 
     # Step 1: Mark source as 'processing'
-    async with UnitOfWork() as uow:
+    # knowledge_sources has RLS via JOIN to knowledge_bases — but UPDATE by PK
+    # on a RLS-protected table still needs the GUC. Use tenant_id here.
+    async with UnitOfWork(tenant_id=tenant_id) as uow:
         await uow.session.execute(
             update(KnowledgeSource)
             .where(KnowledgeSource.id == source_id)
@@ -70,7 +72,7 @@ async def run_ingestion(
         chunking_service=ChunkingService(),
     )
 
-    async with UnitOfWork() as uow:
+    async with UnitOfWork(tenant_id=tenant_id) as uow:
         try:
             chunk_count = 0
             if source_type == "paste" and content:

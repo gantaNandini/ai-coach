@@ -80,6 +80,30 @@ class Tenant(BusinessBase, Base):
         default=10,
         server_default=text("10"),
     )
+    max_knowledge_bases: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=3,
+        server_default=text("3"),
+        comment="Max KBs allowed on this tenant's plan",
+    )
+    max_sessions_per_month: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=100,
+        server_default=text("100"),
+        comment="Max coaching sessions per calendar month",
+    )
+    stripe_customer_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Stripe customer ID for billing",
+    )
+    stripe_subscription_id: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Stripe subscription ID",
+    )
     metadata_: Mapped[Optional[dict]] = mapped_column(
         "metadata",                      # DB column name avoids SA Base.metadata clash
         JSONB,

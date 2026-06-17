@@ -6,6 +6,7 @@ from typing import Any
 from app.schemas.common import MessageResponse
 from app.services.module.module_service import CoachingModuleService
 from app.api.v1.dependencies.auth import get_current_active_user, get_current_tenant_id
+from app.api.v1.dependencies.permissions import require_role
 from app.models.user import User
 
 router = APIRouter()
@@ -75,6 +76,8 @@ async def get_module(
     # Enrich with current version details
     try:
         async with UnitOfWork() as uow:
+            from sqlalchemy import text as _st
+            await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
             mv = await uow.module_versions.get_current_version_with_definition(module_id)
             if mv:
                 result["framework_name"] = mv.framework_name or ""
@@ -99,8 +102,9 @@ async def create_module(
     body: ModuleCreateRequest,
     current_user: User = Depends(get_current_active_user),
     tenant_id: UUID | None = Depends(get_current_tenant_id),
+    _admin: User = Depends(require_role("admin")),
 ):
-    """Create a new coaching module."""
+    """Create a new coaching module. Admin only."""
     m = await _svc.create_module(
         key=body.key, name=body.name, tenant_id=tenant_id,
         created_by=current_user.id, blurb=body.blurb, icon=body.icon,
@@ -157,11 +161,14 @@ async def create_module_version(
     body: ModuleVersionCreateRequest,
     current_user: User = Depends(get_current_active_user),
     tenant_id: UUID | None = Depends(get_current_tenant_id),
+    _admin: User = Depends(require_role("admin")),
 ):
-    """
-    Create a complete module version with intake schema, rubric, steps,
-    prompt templates, and personas. This is the no-code module builder endpoint.
-    """
+    """Create a complete module version. Validates schema before DB write."""
+    from app.services.module_validator import validate_module_schema
+    from fastapi import HTTPException
+    errors = validate_module_schema(body.model_dump())
+    if errors:
+        raise HTTPException(status_code=422, detail={"errors": errors})
     from app.database.unit_of_work import UnitOfWork
     from app.models.module import (
         ModuleVersion, ModuleFrameworkStep, ModulePromptTemplate, ModulePersona
@@ -170,6 +177,8 @@ async def create_module_version(
 
     async with UnitOfWork() as uow:
         # Get next version number
+        from sqlalchemy import text as _st
+        await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
         count = await uow.module_versions.count_versions(module_id)
         version_number = count + 1
 
@@ -248,6 +257,8 @@ async def publish_version(
     from app.database.unit_of_work import UnitOfWork
     from app.core.exceptions import NotFoundError
     async with UnitOfWork() as uow:
+        from sqlalchemy import text as _st
+        await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
         mv = await uow.module_versions.get(version_id)
         if mv is None or mv.module_id != module_id:
             raise NotFoundError("ModuleVersion", version_id)
@@ -281,6 +292,8 @@ async def list_versions(
     from app.database.unit_of_work import UnitOfWork
 
     async with UnitOfWork() as uow:
+        from sqlalchemy import text as _st
+        await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
         page = await uow.module_versions.version_history(module_id, page=1, page_size=50)
 
     return {
@@ -310,6 +323,8 @@ async def get_version_detail(
     from app.core.exceptions import NotFoundError
 
     async with UnitOfWork() as uow:
+        from sqlalchemy import text as _st
+        await uow.session.execute(_st("SET LOCAL app.is_superadmin = 'true'"))
         mv = await uow.module_versions.get_version_with_definition(version_id)
         if mv is None or mv.module_id != module_id:
             raise NotFoundError("ModuleVersion", version_id)

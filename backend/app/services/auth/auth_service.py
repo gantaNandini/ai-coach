@@ -86,9 +86,14 @@ class AuthService:
             ConflictError   — email already registered
             NotFoundError   — "learner" role does not exist in seed data
         """
-        async with UnitOfWork() as uow:
-            # Check for duplicate email
+        from sqlalchemy import text as _text
+
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            # Bypass RLS for email uniqueness check — no tenant context at registration time
+            await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'true'"))
             existing = await uow.users.get_by_email(email)
+            await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'false'"))
+
             if existing is not None:
                 raise ConflictError(f"Email '{email}' is already registered.")
 
@@ -137,26 +142,54 @@ class AuthService:
         """
         Authenticate a user and return a JWT access+refresh token pair.
 
-        - Loads user with roles for JWT claims.
-        - Verifies password with bcrypt.
-        - Creates signed JWT access token and opaque refresh token.
-        - Stores SHA-256 hash of the refresh token in the DB.
-        - Updates last_login_at timestamp.
-        - Cleans up expired/revoked tokens for the user.
+        Login must bypass RLS on the users table since we don't know the
+        tenant context yet — that's what we're determining here.
+        We use a superadmin GUC for the user lookup only, then scope the
+        JWT to the effective tenant after verifying credentials.
 
         Raises:
             AuthenticationError — invalid credentials or inactive account
         """
-        async with UnitOfWork() as uow:
+        from sqlalchemy import text as _text
+
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            # Bypass RLS for the auth lookup — we don't have tenant context yet
+            await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'true'"))
+
             user = await uow.users.get_by_email_with_roles(
                 email, tenant_id=tenant_id
             )
 
+            # Reset superadmin flag immediately after lookup
+            await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'false'"))
+
             if user is None or not user.is_active:
+                # Audit failed login
+                import asyncio as _asyncio
+                from app.services.audit_service import write_audit_log_background
+                _asyncio.create_task(write_audit_log_background(
+                    action="login_failed",
+                    metadata={"email": email, "reason": "user_not_found_or_inactive"},
+                ))
                 raise AuthenticationError("Invalid email or password.")
 
             if not verify_password(password, user.password_hash):
+                import asyncio as _asyncio
+                from app.services.audit_service import write_audit_log_background
+                _asyncio.create_task(write_audit_log_background(
+                    action="login_failed",
+                    user_id=user.id,
+                    tenant_id=getattr(user, 'tenant_id', None),
+                    resource_type="user",
+                    resource_id=str(user.id),
+                    metadata={"email": email, "reason": "wrong_password"},
+                ))
                 raise AuthenticationError("Invalid email or password.")
+
+            # Resolve primary tenant_id if not explicitly provided
+            effective_tenant_id = tenant_id
+            if effective_tenant_id is None and hasattr(user, 'tenant_id') and user.tenant_id:
+                effective_tenant_id = user.tenant_id
 
             # Resolve role names for the JWT claims
             role_names: list[str] = [
@@ -169,7 +202,7 @@ class AuthService:
             access_token = create_access_token(
                 user_id=user.id,
                 roles=role_names,
-                tenant_id=tenant_id,
+                tenant_id=effective_tenant_id,
             )
             raw_refresh_token = secrets.token_urlsafe(32)
             token_hash = _hash_token(raw_refresh_token)
@@ -194,6 +227,18 @@ class AuthService:
             await uow.refresh_tokens.delete_expired_and_revoked(user.id)
 
             await uow.commit()
+
+        # Audit successful login (background, after commit)
+        import asyncio as _asyncio2
+        from app.services.audit_service import write_audit_log_background
+        _asyncio2.create_task(write_audit_log_background(
+            action="login",
+            user_id=user.id,
+            tenant_id=effective_tenant_id,
+            resource_type="user",
+            resource_id=str(user.id),
+            metadata={"email": email},
+        ))
 
         return TokenPair(
             access_token=access_token,

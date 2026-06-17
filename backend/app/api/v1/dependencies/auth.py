@@ -29,12 +29,20 @@ async def get_current_user(
     payload: AccessTokenPayload = Depends(get_current_user_payload),
     uow: UnitOfWork = Depends(get_uow),
 ) -> User:
-    # payload.sub is a string UUID — convert before DB lookup
     try:
         user_uuid = UUID(payload.sub)
     except (ValueError, AttributeError):
         raise InvalidTokenError("Invalid token subject")
+
+    # Users RLS policy allows tenant_id IS NULL (superadmin) OR tenant_id = GUC.
+    # The policy now handles empty-string GUC safely (no ::uuid cast on empty string).
+    # We set superadmin bypass so a user can always look themselves up regardless of
+    # which tenant context the request carries.
+    from sqlalchemy import text as _text
+    await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'true'"))
     user = await uow.users.get_with_roles(user_uuid)
+    await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'false'"))
+
     if user is None or not user.is_active:
         raise InvalidTokenError("User not found or inactive")
     return user
@@ -53,10 +61,14 @@ async def get_optional_user(
     if not token:
         return None
     try:
+        from sqlalchemy import text as _text
         data = decode_token(token)
         payload = AccessTokenPayload(**data)
         user_uuid = UUID(payload.sub)
-        return await uow.users.get_with_roles(user_uuid)
+        await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'true'"))
+        user = await uow.users.get_with_roles(user_uuid)
+        await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'false'"))
+        return user
     except Exception:
         return None
 

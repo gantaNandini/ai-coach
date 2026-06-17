@@ -20,6 +20,18 @@ from sentence_transformers import SentenceTransformer
 
 from app.core.config import settings
 
+# Module-level singleton — load the model once per process.
+# Multiple EmbeddingService() instances share the same underlying model object.
+# This prevents repeated ~2s model loads that block the asyncio event loop.
+_MODEL_SINGLETON: SentenceTransformer | None = None
+
+
+def _get_model() -> SentenceTransformer:
+    global _MODEL_SINGLETON
+    if _MODEL_SINGLETON is None:
+        _MODEL_SINGLETON = SentenceTransformer(settings.EMBEDDING_MODEL)
+    return _MODEL_SINGLETON
+
 
 class EmbeddingService:
     """Generate embeddings for text using sentence-transformers."""
@@ -28,18 +40,19 @@ class EmbeddingService:
         """
         Initialize embedding service.
 
-        Loads the sentence-transformer model into memory. This may take
-        a few seconds on first initialization when the model needs to
-        be downloaded from Hugging Face.
+        Uses a module-level singleton for the underlying SentenceTransformer model.
+        The first instantiation loads the model (~2s); subsequent instantiations
+        reuse the already-loaded model with no overhead.
 
         The model is cached at ~/.cache/huggingface/hub/ after first download.
         """
         self._model_name = settings.EMBEDDING_MODEL
         self._dimension = settings.EMBEDDING_DIMENSION
-        
-        # Load model (cached after first load)
-        self._model = SentenceTransformer(self._model_name)
-        
+
+        # Use the module-level singleton — avoids repeated cold loads that
+        # block the asyncio event loop on Windows.
+        self._model = _get_model()
+
         # Verify dimension matches configuration
         actual_dim = self._model.get_sentence_embedding_dimension()
         if actual_dim != self._dimension:

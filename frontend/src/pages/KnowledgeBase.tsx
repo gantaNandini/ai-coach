@@ -5,7 +5,6 @@ import Layout from '@/components/Layout'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import { KbListSkeleton } from '@/components/LoadingSkeleton'
 import { knowledgeApi } from '@/lib/api'
-
 function SourceStatusBadge({ status }: { status: string }) {
   const cfg = {
     completed: 'bg-green-500/10 text-green-600',
@@ -84,15 +83,13 @@ export default function KnowledgeBase() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedKb || !e.target.files?.[0]) return
     const file = e.target.files[0]
-    const form = new FormData()
-    form.append('file', file)
-    await fetch(`/api/v1/knowledge/${selectedKb}/sources/upload`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
-      body: form,
-    })
-    qc.invalidateQueries({ queryKey: ['sources', selectedKb] })
-    qc.invalidateQueries({ queryKey: ['knowledge-bases'] })
+    try {
+      await knowledgeApi.uploadFile(selectedKb, file)
+      qc.invalidateQueries({ queryKey: ['sources', selectedKb] })
+      qc.invalidateQueries({ queryKey: ['knowledge-bases'] })
+    } catch {
+      // error handled by React Query / error boundary
+    }
     e.target.value = ''
   }
 

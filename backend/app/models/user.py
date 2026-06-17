@@ -229,6 +229,23 @@ class User(BusinessBase, Base):
         comment="bcrypt hash — never store raw password",
     )
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Convenience columns for direct tenant scoping and RLS filtering.
+    # tenant_id: the user's primary tenant (NULL for platform superadmins).
+    # role: the user's highest role in their primary tenant — kept in sync by service layer.
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Primary tenant for RLS. NULL = platform-level user (superadmin).",
+    )
+    role: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="user",
+        server_default=text("'user'"),
+        comment="Convenience role label: user | admin | superadmin",
+    )
     avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean,

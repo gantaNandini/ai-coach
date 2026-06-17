@@ -44,7 +44,7 @@ class FeedbackService:
             NotFoundError       — report not found
             PermissionDeniedError — report does not belong to user_id
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             report = await uow.feedback_reports.get_by_id(
                 report_id, tenant_id=tenant_id
             )
@@ -96,7 +96,7 @@ class FeedbackService:
 
         Optionally filtered by tenant_id.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.feedback_reports.list_by_user(
                 user_id, tenant_id=tenant_id, page=page, page_size=page_size
             )

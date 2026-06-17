@@ -24,29 +24,47 @@ email-validator==2.2.0
 
 # AI
 ollama==0.4.4
-langchain==0.3.9
-langchain-community==0.3.9
-langchain-postgres==0.0.12
 
-# Embeddings
-sentence-transformers==3.3.1
+# Embeddings — CPU-only torch to avoid 1.5GB CUDA download
+torch==2.2.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+sentence-transformers==2.7.0
+numpy>=1.24.0,<2.0
+langchain-text-splitters==0.3.8
 
 # Document parsing
 pypdf==5.1.0
 python-docx==1.1.2
 python-pptx==1.0.2
 beautifulsoup4==4.12.3
-httpx==0.28.1
+httpx==0.27.2
+
+# Background jobs (durable queue — replaces asyncio.create_task)
+arq==0.26.1
+redis==5.2.1
+
+# Object storage
+boto3==1.35.99
+
+# Email
+resend==2.7.0
+
+# Billing
+stripe==11.5.0
+
+# Observability
+sentry-sdk[fastapi]==2.19.2
+
+# File type validation
+python-magic-bin==0.4.14; sys_platform == "win32"
+python-magic==0.4.27; sys_platform != "win32"
 
 # Utilities
 python-dotenv==1.0.1
 tenacity==9.0.0
 structlog==24.4.0
-uuid6==2024.1.12
 
 # Testing
 pytest==8.3.4
 pytest-asyncio==0.24.0
 pytest-cov==6.0.0
-httpx==0.28.1
 factory-boy==3.3.1

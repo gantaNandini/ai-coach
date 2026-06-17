@@ -1,0 +1,27 @@
+import psycopg2
+conn = psycopg2.connect(host='localhost', dbname='aicoach', user='aicoach', password='aicoach')
+conn.autocommit = True
+cur = conn.cursor()
+cur.execute("SET app.is_superadmin = 'true'")
+cur.execute("SELECT count(*) FROM knowledge_chunks")
+print("knowledge_chunks total:", cur.fetchone()[0])
+cur.execute("SELECT count(*) FROM knowledge_chunks WHERE embedding IS NOT NULL")
+print("knowledge_chunks with embeddings:", cur.fetchone()[0])
+cur.execute("SELECT count(*) FROM coaching_sessions WHERE status='completed'")
+print("completed coaching sessions:", cur.fetchone()[0])
+cur.execute("SELECT count(*) FROM feedback_reports")
+print("feedback_reports:", cur.fetchone()[0])
+cur.execute("SELECT overall_score, LEFT(feedback_text,80) FROM feedback_reports ORDER BY created_at DESC LIMIT 3")
+for r in cur.fetchall():
+    print(f"  score={r[0]} text={r[1]}")
+cur.execute("SELECT count(*) FROM analytics_events")
+print("analytics_events:", cur.fetchone()[0])
+cur.execute("SELECT event_type, count(*) FROM analytics_events GROUP BY event_type ORDER BY count DESC")
+for r in cur.fetchall():
+    print(f"  {r[0]}: {r[1]}")
+cur.execute("SELECT count(*) FROM knowledge_sources WHERE status='completed'")
+print("completed knowledge sources:", cur.fetchone()[0])
+cur.execute("SELECT count(*) FROM knowledge_sources WHERE status='pending'")
+print("pending knowledge sources:", cur.fetchone()[0])
+conn.close()
+print("DONE")

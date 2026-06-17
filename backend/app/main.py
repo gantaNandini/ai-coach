@@ -157,20 +157,20 @@ async def health_check():
 @app.get("/health/detailed", tags=["health"])
 async def health_detailed():
     """
-    Detailed component health — database, pgvector, ollama, embeddings.
-    Use this endpoint to diagnose startup issues.
+    Detailed component health — database, redis, pgvector, ollama, embeddings.
+    Returns 503 if any critical component (db, redis) is down.
     """
     from app.core.startup import startup_status
-    all_ok = (
-        startup_status.get("database") == "ok"
-        and startup_status.get("ready") is True
-    )
+    db_ok = startup_status.get("database") == "ok"
+    redis_ok = startup_status.get("redis") == "ok"
+    all_critical_ok = db_ok and redis_ok
     return JSONResponse(
-        status_code=200 if all_ok else 503,
+        status_code=200 if all_critical_ok else 503,
         content={
-            "status": "healthy" if all_ok else "degraded",
+            "status": "healthy" if all_critical_ok else "degraded",
             "components": {
                 "database": startup_status.get("database", "unknown"),
+                "redis": startup_status.get("redis", "unknown"),
                 "pgvector": startup_status.get("pgvector", "unknown"),
                 "ollama": startup_status.get("ollama", "unknown"),
                 "embeddings": startup_status.get("embeddings", "unknown"),

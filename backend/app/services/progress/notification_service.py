@@ -51,7 +51,7 @@ class NotificationService:
 
         extra: optional JSONB payload for the frontend.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             notification = Notification(
                 user_id=user_id,
                 tenant_id=tenant_id,
@@ -83,7 +83,7 @@ class NotificationService:
 
         Optionally filtered by tenant_id.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             from sqlalchemy import func, select
 
             from app.models.notification import Notification
@@ -187,7 +187,7 @@ class NotificationService:
 
         Returns the count of notifications marked read.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             from sqlalchemy import update
 
             from app.models.notification import Notification

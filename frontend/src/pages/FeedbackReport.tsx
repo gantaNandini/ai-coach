@@ -104,8 +104,8 @@ export default function FeedbackReport() {
           </div>
         )}
 
-        {/* Citations */}
-        {report.knowledge_used && report.citations?.length > 0 && (
+        {/* Citations — only shown when citations_visible is true (tenant setting) */}
+        {report.citations_visible !== false && report.knowledge_used && report.citations?.length > 0 && (
           <div className="bg-card border border-border rounded-xl p-6">
             <div className="flex items-center gap-2 mb-3">
               <BookOpen className="h-4 w-4 text-muted-foreground" />

@@ -42,6 +42,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Content-Security-Policy — permits the React SPA and API calls on the
         # same origin, Stripe.js from its CDN, and nothing else by default.
+        # NOTE: /docs (Swagger UI) uses inline scripts — we skip CSP on the docs paths
+        if request.url.path in ("/docs", "/redoc", "/openapi.json"):
+            return response
+
         csp_parts = [
             "default-src 'self'",
             # Scripts: self + Stripe (billing) + inline eval needed by Vite dev

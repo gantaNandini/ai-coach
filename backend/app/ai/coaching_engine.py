@@ -19,7 +19,7 @@ import re
 import time
 from uuid import UUID
 
-from app.ai.ollama_client import OllamaClient
+from app.ai.llm_factory import LLMClient, get_llm_client
 from app.ai.prompt_builder import PromptBuilder
 from app.core.exceptions import NotFoundError, UnprocessableError
 from app.database.unit_of_work import UnitOfWork
@@ -33,24 +33,32 @@ class CoachingEngine:
 
     def __init__(
         self,
-        ollama_client: OllamaClient,
-        prompt_builder: PromptBuilder,
-        retrieval_service: RetrievalService,
-        citation_service: CitationService,
+        llm_client: LLMClient | None = None,
+        prompt_builder: PromptBuilder | None = None,
+        retrieval_service: RetrievalService | None = None,
+        citation_service: CitationService | None = None,
+        # Legacy param name — kept for backwards compatibility
+        ollama_client: LLMClient | None = None,
     ) -> None:
         """
         Initialize coaching engine.
 
         Args:
-            ollama_client: LLM client for generation
+            llm_client: LLM client (any LLMClient-compatible object)
             prompt_builder: service for resolving prompt templates
             retrieval_service: service for RAG retrieval
             citation_service: service for formatting citations
+            ollama_client: deprecated alias for llm_client
         """
-        self._ollama = ollama_client
-        self._prompt_builder = prompt_builder
+        self._llm = llm_client or ollama_client or get_llm_client()
+        self._prompt_builder = prompt_builder or PromptBuilder()
         self._retrieval = retrieval_service
         self._citations = citation_service
+
+    # Legacy attribute alias so any existing code using self._ollama still works
+    @property
+    def _ollama(self) -> LLMClient:
+        return self._llm
 
     async def generate_feedback(
         self,
@@ -117,12 +125,12 @@ class CoachingEngine:
             # Generate with LLM
             import logging as _log
             _logger = _log.getLogger("ai_coach.coaching_engine")
-            _logger.info("[CE] Calling Ollama generate...")
-            llm_response = await self._ollama.generate(
+            _logger.info("[CE] Calling LLM generate (provider=%s)...", type(self._llm).__name__)
+            llm_response = await self._llm.generate(
                 prompt=prompt,
                 system="You are an expert executive coach providing constructive feedback.",
             )
-            _logger.info(f"[CE] Ollama responded — content length={len(llm_response.content)}")
+            _logger.info(f"[CE] LLM responded — content length={len(llm_response.content)}")
             _logger.info(f"[CE] RAW LLM RESPONSE:\n{'='*60}\n{llm_response.content[:5000]}\n{'='*60}")
 
             # Parse response
@@ -134,9 +142,13 @@ class CoachingEngine:
             except Exception as exc:
                 _logger.error(f"[CE] PARSE FAILED: {type(exc).__name__}: {exc}")
                 import traceback
+                _logger.error(f"[CE] RAW LLM OUTPUT (for debugging):\n{llm_response.content}")
                 _logger.error(f"[CE] TRACEBACK:\n{traceback.format_exc()}")
+                # Do NOT return placeholder/fabricated scores. Surface the failure
+                # so the frontend can show a clear error instead of fake data.
                 raise UnprocessableError(
-                    f"Failed to parse LLM response: {exc}"
+                    f"AI feedback generation failed: the model response could not be parsed. "
+                    f"Raw output has been logged for debugging. Error: {exc}"
                 ) from exc
             
             # Format citations
@@ -155,7 +167,12 @@ class CoachingEngine:
                 recommendations=parsed["recommendations"],
                 next_steps=parsed.get("next_steps"),
                 citations=citations,
-                knowledge_used=len(chunks) > 0,
+                # knowledge_used is True only when at least one chunk with
+                # non-zero similarity score was actually retrieved (REQ-6.2)
+                knowledge_used=any(
+                    getattr(chunk, "similarity", 1.0) > 0
+                    for chunk in chunks
+                ) if chunks else False,
                 raw_ai_response=llm_response.content,
                 generation_metadata={
                     "prompt_tokens": llm_response.prompt_tokens,
@@ -184,6 +201,11 @@ class CoachingEngine:
 
     def _get_default_coaching_template(self) -> str:
         return """You are an expert coach. Review this {{framework}} feedback submission and respond with ONLY a JSON object.
+
+KNOWLEDGE BASE CONTEXT:
+{{knowledge}}
+
+IMPORTANT: If the knowledge context above says "No specific knowledge found", base your feedback on general {{framework}} framework principles only. Do NOT invent citations, source names, or document references that do not appear above.
 
 Submission:
 Situation: {{situation}}
@@ -255,18 +277,6 @@ Respond with ONLY this JSON (no other text):
             "recommendations": recommendations,
             "next_steps": next_steps,
         }
-
-    def _generate_placeholder_scores(self, rubric: dict) -> dict:
-        """Generate mid-range placeholder scores — used as fallback only."""
-        dimensions = rubric.get("dimensions", [])
-        scores = {}
-        for dim in dimensions:
-            name = dim.get("name", "Unknown")
-            bands = dim.get("band_descriptors", {})
-            max_score = len(bands) if bands else 4
-            mid_score = max_score // 2 + 1
-            scores[name] = {"score": mid_score, "rationale": f"Placeholder score for {name}"}
-        return scores
 
     def _extract_rubric_scores_from_feedback(self, feedback_text: str, rubric: dict) -> dict:
         """

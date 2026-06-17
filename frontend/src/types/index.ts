@@ -5,6 +5,7 @@ export interface User {
   avatar_url: string | null
   is_active: boolean
   is_superadmin: boolean
+  roles?: string[]
   last_login_at: string | null
   created_at: string
   updated_at: string

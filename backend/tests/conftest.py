@@ -24,6 +24,27 @@ _startup.startup_status.update(
     ready=True,
 )
 
+# ── Model pre-warm at import time ─────────────────────────────────────────────
+# Sentence-transformer models take 5–20s to load on this machine.
+# Loading them here (synchronously, at module import) means they are warm before
+# any test opens a DB connection. This prevents the Windows Proactor asyncpg
+# [WinError 64] / 'NoneType.send' errors caused by blocking the event loop
+# with a synchronous CPU-bound load while a DB connection is held open.
+#
+# The reranker (CrossEncoder, ~400MB) is NOT pre-loaded here because it
+# would slow down every test run, even those that don't need it.
+# Instead, rerank() is patched to a passthrough in the mock_reranker fixture below.
+
+import app.rag.reranker as _reranker_mod
+
+# Patch the reranker to a synchronous passthrough for the entire test session.
+# This avoids loading the 400MB CrossEncoder model which blocks the event loop
+# on first use. Reranking correctness is not under test in this suite.
+async def _noop_rerank(query, results, top_k=5):
+    return results[:top_k]
+
+_reranker_mod.rerank = _noop_rerank
+
 
 @pytest.fixture(autouse=True)
 async def fresh_db_engine():

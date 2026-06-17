@@ -35,7 +35,7 @@ class AchievementService:
         plus tenant-specific achievements.
         When tenant_id is None, returns all achievements (superadmin).
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             from sqlalchemy import select
 
             from app.models.gamification import Achievement
@@ -64,7 +64,7 @@ class AchievementService:
         When tenant_id is provided, filters to that tenant scope
         plus global awards (tenant_id=NULL).
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             from sqlalchemy import select
 
             from app.models.gamification import UserAchievement
@@ -102,7 +102,7 @@ class AchievementService:
         Raises:
             NotFoundError — achievement key not found
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             from sqlalchemy import select
 
             from app.core.exceptions import NotFoundError
@@ -190,7 +190,7 @@ class AchievementService:
         newly_awarded: list[UserAchievement] = []
 
         try:
-            async with UnitOfWork() as uow:
+            async with UnitOfWork(tenant_id=tenant_id) as uow:
                 from sqlalchemy import func, select
                 from app.models.gamification import Achievement
                 from app.models.session import CoachingSession, RoleplaySession

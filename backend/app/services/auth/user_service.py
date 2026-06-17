@@ -99,7 +99,7 @@ class UserService:
         Raises:
             None — empty page returned if no members exist
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.users.list_by_tenant(
                 tenant_id, page=page, page_size=page_size
             )
@@ -116,7 +116,7 @@ class UserService:
 
         Uses case-insensitive ILIKE matching.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.users.search(
                 query, tenant_id=tenant_id, page=page, page_size=page_size
             )
@@ -174,7 +174,7 @@ class UserService:
             NotFoundError  — user or role not found
             ConflictError  — user already has this role in this scope
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             # Validate user and role existence
             user = await uow.users.get(user_id)
             if user is None:
@@ -201,7 +201,7 @@ class UserService:
 
         Returns silently if the role was not assigned.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             revoked = await uow.roles.revoke_role_from_user(
                 user_id, role_id, tenant_id=tenant_id
             )

@@ -2,33 +2,39 @@
 monitoring.py — Internal monitoring and observability endpoints.
 
 Endpoints:
-  GET /monitoring/health     — component health (db, pgvector, ollama)
-  GET /monitoring/tasks      — recent background task status
-  GET /monitoring/stats      — database row counts for quick audit
-  GET /monitoring/config     — non-secret config values
-
-All endpoints require authentication. /monitoring/stats and /config
-additionally require superadmin or program_owner role.
+  GET /monitoring/health     — component health (db, pgvector, llm)  — any authenticated user
+  GET /monitoring/tasks      — recent background task status          — any authenticated user
+  GET /monitoring/stats      — database row counts                    — superadmin only
+  GET /monitoring/config     — non-secret config values               — superadmin only
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from app.api.v1.dependencies.auth import get_current_active_user
 from app.models.user import User
 
 router = APIRouter()
 
 
+def _require_superadmin(current_user: User = Depends(get_current_active_user)) -> User:
+    if not current_user.is_superadmin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin access required")
+    return current_user
+
+
 @router.get("/health")
 async def component_health(
     current_user: User = Depends(get_current_active_user),
 ):
-    """Detailed component health status."""
+    """Detailed component health status — available to all authenticated users."""
     from app.core.startup import startup_status
+    from app.core.config import settings
     return {
         "components": startup_status,
         "rag_enabled": startup_status.get("pgvector") == "ok",
-        "ai_enabled": startup_status.get("ollama", "").startswith("ok"),
+        "ai_enabled": startup_status.get("llm_provider", startup_status.get("ollama", "")).startswith("ok")
+                      or startup_status.get("llm_provider", "") == "claude",
+        "llm_provider": settings.LLM_PROVIDER,
     }
 
 
@@ -40,7 +46,7 @@ async def task_status(
     """Recent background task history (ingestion, embeddings)."""
     from app.tasks.worker import get_recent_tasks
     tasks = get_recent_tasks(limit=limit)
-    counts = {}
+    counts: dict = {}
     for t in tasks:
         counts[t["status"]] = counts.get(t["status"], 0) + 1
     return {"tasks": tasks, "summary": counts}
@@ -48,10 +54,10 @@ async def task_status(
 
 @router.get("/stats")
 async def database_stats(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_require_superadmin),
 ):
-    """Row counts across key tables — useful for verifying seeding and ingestion."""
-    from sqlalchemy import text, func, select
+    """Row counts across key tables — superadmin only."""
+    from sqlalchemy import text
     from app.database.engine import engine
 
     tables = [
@@ -61,7 +67,7 @@ async def database_stats(
         "analytics_events", "user_progress", "user_achievements",
         "module_prompt_templates", "module_framework_steps",
     ]
-    counts = {}
+    counts: dict = {}
     async with engine.connect() as conn:
         for table in tables:
             try:
@@ -75,18 +81,17 @@ async def database_stats(
 
 @router.get("/config")
 async def app_config(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_require_superadmin),
 ):
-    """Non-secret configuration values for debugging."""
+    """Non-secret configuration values for debugging — superadmin only."""
     from app.core.config import settings
     return {
         "app_name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
         "debug": settings.DEBUG,
-        "ollama_model": settings.OLLAMA_MODEL,
-        "ollama_base_url": settings.OLLAMA_BASE_URL,
-        "ollama_timeout": settings.OLLAMA_TIMEOUT,
+        "llm_provider": settings.LLM_PROVIDER,
+        "llm_model": settings.CLAUDE_MODEL if settings.LLM_PROVIDER == "claude" else settings.OLLAMA_MODEL,
         "embedding_model": settings.EMBEDDING_MODEL,
         "embedding_dimension": settings.EMBEDDING_DIMENSION,
         "rag_top_k": settings.RAG_TOP_K,

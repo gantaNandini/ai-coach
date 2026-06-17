@@ -42,11 +42,46 @@ class CoachingSessionService:
 
         Pins the current module version (module_version_id) so the
         session remains immutable even if the module is updated later.
+        Enforces the tenant's monthly session limit (max_sessions_per_month).
 
         Raises:
-            NotFoundError — module has no current version
+            NotFoundError       — module has no current version
+            PermissionDeniedError — tenant has reached their monthly session limit
         """
-        async with UnitOfWork() as uow:
+        from datetime import date
+        from sqlalchemy import text as _text
+
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
+            # ── Plan limit enforcement ────────────────────────────────────────
+            if tenant_id is not None:
+                # Read tenant limits using superadmin bypass to access tenants table
+                await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'true'"))
+                tenant_row = (await uow.session.execute(
+                    _text("SELECT max_sessions_per_month FROM tenants WHERE id = :tid"),
+                    {"tid": str(tenant_id)},
+                )).fetchone()
+                await uow.session.execute(_text("SET LOCAL app.is_superadmin = 'false'"))
+
+                if tenant_row:
+                    max_sessions = tenant_row[0]
+                    # Count sessions started this calendar month
+                    month_start = date.today().replace(day=1)  # datetime.date object
+                    count_row = (await uow.session.execute(
+                        _text(
+                            "SELECT COUNT(*) FROM coaching_sessions "
+                            "WHERE tenant_id = :tid AND created_at >= :month_start"
+                        ),
+                        {"tid": str(tenant_id), "month_start": month_start},
+                    )).fetchone()
+                    current_count = count_row[0] if count_row else 0
+
+                    if current_count >= max_sessions:
+                        raise PermissionDeniedError(
+                            f"Your plan allows {max_sessions} sessions per month. "
+                            f"You have used {current_count} this month. "
+                            "Upgrade your plan to continue."
+                        )
+
             version = await uow.module_versions.get_current_version(module_id)
             if version is None:
                 raise NotFoundError(
@@ -83,7 +118,7 @@ class CoachingSessionService:
             NotFoundError       — session not found
             PermissionDeniedError — session does not belong to user_id
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             session = await uow.coaching_sessions.get_by_id(
                 session_id, tenant_id=tenant_id
             )
@@ -125,7 +160,7 @@ class CoachingSessionService:
 
         Optionally filtered by tenant_id and/or status.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.coaching_sessions.list_by_user(
                 user_id,
                 tenant_id=tenant_id,

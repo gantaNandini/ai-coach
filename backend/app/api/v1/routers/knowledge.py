@@ -3,7 +3,7 @@ import logging
 import os
 import uuid
 from uuid import UUID
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, status
 from pydantic import BaseModel
 from app.schemas.common import MessageResponse
 from app.services.knowledge.knowledge_service import KnowledgeBaseService, KnowledgeSourceService
@@ -17,6 +17,54 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 _kb_svc = KnowledgeBaseService()
 _src_svc = KnowledgeSourceService()
+
+# ── File upload validation ────────────────────────────────────────────────────
+
+ALLOWED_MIME_TYPES = {
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+    'text/markdown',
+    'text/csv',
+}
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB
+
+
+async def validate_upload(file: UploadFile) -> None:
+    """
+    Validate uploaded file by magic bytes (not just extension or Content-Type header).
+    Raises HTTP 413 if too large, 415 if MIME type is not allowed.
+    """
+    # Size check before reading full file
+    if file.size and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 50MB.")
+
+    # Magic byte check — read first 2KB only, then reset position
+    header = await file.read(2048)
+    await file.seek(0)
+
+    try:
+        import magic
+        mime = magic.from_buffer(header, mime=True)
+    except Exception:
+        # python-magic not available — fall back to extension check
+        ext = os.path.splitext(file.filename or "")[-1].lower()
+        ext_to_mime = {
+            ".pdf": "application/pdf",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".txt": "text/plain",
+            ".md": "text/markdown",
+            ".csv": "text/csv",
+        }
+        mime = ext_to_mime.get(ext, "application/octet-stream")
+
+    if mime not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"File type '{mime}' is not supported. Allowed: PDF, DOCX, PPTX, TXT, MD, CSV."
+        )
 
 
 class KBCreateRequest(BaseModel):
@@ -68,6 +116,17 @@ async def create_knowledge_base(
         name=body.name, tenant_id=tenant_id, scope=body.scope,
         description=body.description, created_by=current_user.id,
     )
+    # Audit log (non-blocking — use background task so it doesn't block response)
+    import asyncio as _asyncio
+    from app.services.audit_service import write_audit_log_background
+    _asyncio.create_task(write_audit_log_background(
+        action="kb_created",
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        resource_type="knowledge_base",
+        resource_id=str(kb.id),
+        metadata={"name": kb.name, "scope": kb.scope},
+    ))
     return {"id": str(kb.id), "name": kb.name, "scope": kb.scope}
 
 
@@ -75,9 +134,16 @@ async def create_knowledge_base(
 async def delete_knowledge_base(
     kb_id: UUID,
     current_user: User = Depends(get_current_active_user),
+    tenant_id: UUID | None = Depends(get_current_tenant_id),
 ):
     """Delete a knowledge base."""
-    await _kb_svc.delete_knowledge_base(kb_id)
+    await _kb_svc.delete_knowledge_base(kb_id, tenant_id=tenant_id)
+    import asyncio as _asyncio
+    from app.services.audit_service import write_audit_log_background
+    _asyncio.create_task(write_audit_log_background(
+        action="kb_deleted", tenant_id=tenant_id, user_id=current_user.id,
+        resource_type="knowledge_base", resource_id=str(kb_id),
+    ))
     return MessageResponse(message="Knowledge base deleted")
 
 
@@ -123,6 +189,13 @@ async def ingest_text(
         content=body.content,
     )
     logger.info("[KB] Ingestion queued for text source %s (kb=%s)", source.id, kb_id)
+    import asyncio as _asyncio
+    from app.services.audit_service import write_audit_log_background
+    _asyncio.create_task(write_audit_log_background(
+        action="source_created", tenant_id=tenant_id, user_id=current_user.id,
+        resource_type="knowledge_source", resource_id=str(source.id),
+        metadata={"title": body.title, "type": "paste", "kb_id": str(kb_id)},
+    ))
     return {"id": str(source.id), "title": source.title, "type": source.type, "status": source.status}
 
 
@@ -141,6 +214,9 @@ async def upload_source(
     ext = os.path.splitext(file.filename or "")[-1].lower()
     if ext not in settings.ALLOWED_UPLOAD_EXTENSIONS:
         raise BadRequestError(f"File type {ext} not allowed")
+
+    # Magic-byte validation
+    await validate_upload(file)
 
     contents = await file.read()
     if len(contents) > settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024:

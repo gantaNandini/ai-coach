@@ -115,19 +115,43 @@ class UnitOfWork:
     # ── Context manager ───────────────────────────────────────────────────────
 
     async def __aenter__(self) -> "UnitOfWork":
-        # Set PostgreSQL GUC for RLS enforcement
+        # Set PostgreSQL GUC for RLS enforcement.
+        # This MUST succeed — failure means RLS cannot enforce tenant isolation.
+        # We raise hard rather than swallowing the error and continuing.
         if self._tenant_id is not None:
-            try:
-                from sqlalchemy import text as _text
-                await self._session.execute(
-                    _text("SET LOCAL app.current_tenant_id = :tid"),
-                    {"tid": str(self._tenant_id)},
+            import re as _re
+            from sqlalchemy import text as _text
+
+            # Strict UUID format validation before any interpolation.
+            # Rejects anything that isn't canonical UUID format.
+            _UUID_RE = _re.compile(
+                r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+                _re.IGNORECASE,
+            )
+            tid_str = str(self._tenant_id).strip()
+            if not _UUID_RE.match(tid_str):
+                raise ValueError(
+                    f"UnitOfWork: tenant_id '{tid_str}' is not a valid UUID. "
+                    "Refusing to set GUC — this would bypass RLS."
                 )
-                await self._session.execute(
-                    _text("SET LOCAL app.is_superadmin = 'false'")
-                )
-            except Exception:
-                pass  # GUC set is non-fatal — app-layer filters still protect data
+
+            # SET LOCAL does not accept bind parameters in asyncpg.
+            # Value is safe: passed strict UUID regex above.
+            await self._session.execute(
+                _text(f"SET LOCAL app.current_tenant_id = '{tid_str}'"),
+            )
+            await self._session.execute(
+                _text("SET LOCAL app.is_superadmin = 'false'")
+            )
+        else:
+            # No tenant_id means system/superadmin context — bypass RLS so
+            # that bare UnitOfWork() calls (internal services, background tasks)
+            # don't fail with "invalid input syntax for type uuid: ''" when the
+            # GUC is unset and RLS policies try to cast it.
+            from sqlalchemy import text as _text
+            await self._session.execute(
+                _text("SET LOCAL app.is_superadmin = 'true'")
+            )
         return self
 
     async def __aexit__(        self,

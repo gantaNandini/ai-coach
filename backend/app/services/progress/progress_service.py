@@ -34,7 +34,7 @@ class ProgressService:
         Returns None if no progress exists yet (user has not started
         any sessions for this module).
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.user_progress.get_for_user_module(
                 user_id, module_id, tenant_id=tenant_id
             )
@@ -48,7 +48,7 @@ class ProgressService:
         When tenant_id is provided, returns progress for that tenant
         plus platform-level (tenant_id=NULL) records.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.user_progress.list_for_user(
                 user_id, tenant_id=tenant_id
             )
@@ -78,7 +78,7 @@ class ProgressService:
         Returns:
             The updated UserProgress record.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             progress = await uow.user_progress.upsert_after_session(
                 user_id,
                 module_id,
@@ -104,7 +104,7 @@ class ProgressService:
         When module_id is provided, restricts to that module only.
         When module_id is None, returns top learners across all modules.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.user_progress.leaderboard(
                 tenant_id, module_id=module_id, top_n=limit
             )

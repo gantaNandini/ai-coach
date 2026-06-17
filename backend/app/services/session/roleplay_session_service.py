@@ -48,7 +48,7 @@ class RoleplaySessionService:
         Raises:
             NotFoundError — module has no current version
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             version = await uow.module_versions.get_current_version(module_id)
             if version is None:
                 raise NotFoundError(
@@ -123,7 +123,7 @@ class RoleplaySessionService:
 
         Optionally filtered by tenant_id and/or status.
         """
-        async with UnitOfWork() as uow:
+        async with UnitOfWork(tenant_id=tenant_id) as uow:
             return await uow.roleplay_sessions.list_by_user(
                 user_id,
                 tenant_id=tenant_id,

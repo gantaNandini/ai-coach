@@ -61,7 +61,7 @@ class RetrievalService:
 
         should_close = uow is None
         if uow is None:
-            uow = UnitOfWork()
+            uow = UnitOfWork(tenant_id=tenant_id)
             await uow.__aenter__()
 
         try:
@@ -82,29 +82,40 @@ class RetrievalService:
             if _pgvector_available():
                 # Full vector similarity search
                 query_embedding = await self._embedding_service.embed_query(query)
-                return await uow.knowledge_chunks.similarity_search(
+                raw_results = await uow.knowledge_chunks.similarity_search(
                     query_embedding=query_embedding,
                     tenant_id=tenant_id,
                     kb_ids=kb_ids,
-                    top_k=top_k,
+                    top_k=top_k * 3,  # Retrieve 3× for reranker to work with
                     score_threshold=score_threshold,
                 )
             else:
                 # Fallback: full-text keyword search
                 logger.debug("[RAG] pgvector not available — using full-text fallback")
-                return await self._fulltext_search(
+                raw_results = await self._fulltext_search(
                     query=query,
                     tenant_id=tenant_id,
                     kb_ids=kb_ids,
-                    top_k=top_k,
+                    top_k=top_k * 3,
                     uow=uow,
                 )
         except Exception as exc:
             logger.warning("[RAG] Retrieval failed: %s — returning empty results", exc)
             return []
         finally:
+            # Close DB connection BEFORE reranker CPU work.
+            # The cross-encoder model load is synchronous and blocks the event loop;
+            # holding an open asyncpg connection across it causes [WinError 64] on Windows.
             if should_close:
                 await uow.__aexit__(None, None, None)
+
+        # Rerank with local cross-encoder — runs AFTER DB connection is closed.
+        try:
+            from app.rag.reranker import rerank
+            return await rerank(query=query, results=raw_results, top_k=top_k)
+        except Exception as exc:
+            logger.warning("[RAG] Reranking failed: %s — returning top_k unranked", exc)
+            return raw_results[:top_k]
 
     async def _fulltext_search(
         self,

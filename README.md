@@ -281,7 +281,7 @@ See `docs/RUNBOOK.md` for rollback, backup/restore, and secret rotation procedur
 
 ## Project Structure
 
-```
+```text
 ai-coach/
 ├── backend/
 │   ├── app/
@@ -289,7 +289,7 @@ ai-coach/
 │   │   ├── api/v1/routers/  # FastAPI route handlers
 │   │   ├── core/            # Config, security, startup checks
 │   │   ├── database/        # Engine, UnitOfWork (tenant GUC enforcement)
-│   │   ├── middleware/       # Tenant context, logging, rate limiting, security headers
+│   │   ├── middleware/      # Tenant context, logging, rate limiting, security headers
 │   │   ├── models/          # SQLAlchemy models
 │   │   ├── rag/             # Chunking, embedding, retrieval, reranker, citations
 │   │   ├── repositories/    # DB queries — always filtered by tenant_id
@@ -319,8 +319,6 @@ ai-coach/
 ├── seed_test_tenant.sql         # Test tenant + admin user seed
 └── test_platform.ps1            # 29 live endpoint tests
 ```
-
----
 
 ## Contributing
 

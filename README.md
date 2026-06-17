@@ -318,6 +318,8 @@ ai-coach/
 │       ├── hooks/           # useRole, usePageTitle
 │       ├── pages/           # All route-level pages (lazy-loaded)
 │       └── stores/          # Zustand: auth, theme
+├── docs/                        # Architecture decisions (ADRs), runbook
+├── nginx/                       # Production nginx config
 ├── docker-compose.yml           # Full stack (with Ollama)
 ├── docker-compose.noollama.yml  # Dev/CI stack (no Ollama)
 ├── docker-compose.prod.yml      # Production stack

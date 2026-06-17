@@ -22,6 +22,9 @@ ENV/
 .env.local
 .env.*.local
 
+# Kiro IDE workspace folder (local only)
+.kiro/
+
 # pytest
 .pytest_cache/
 htmlcov/
